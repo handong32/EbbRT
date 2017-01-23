@@ -34,12 +34,13 @@ class Function {
   operator bool() const;
   bool IsMultifunc() const;
   bool IsBridge() const;
-
+  
   void SetCommand(uint16_t cmd);
   void SetBusMaster(bool enable);
   void DisableInt();
 
   void DumpAddress() const;
+  void DumpInfo() const;
 
  protected:
   static const constexpr uint8_t kVendorIdAddr = 0x00;
@@ -54,13 +55,13 @@ class Function {
   static const constexpr uint8_t kLatencyTimerAddr = 0x0D;
   static const constexpr uint8_t kHeaderTypeAddr = 0x0E;
   static const constexpr uint8_t kBistAddr = 0x0F;
-
+  
   static const constexpr uint16_t kCommandBusMaster = 1 << 2;
   static const constexpr uint16_t kCommandIntDisable = 1 << 10;
 
   static const constexpr uint8_t kHeaderMultifuncMask = 0x80;
   static const constexpr uint8_t kHeaderTypeBridge = 0x01;
-
+  
   uint8_t Read8(uint8_t offset) const;
   uint16_t Read16(uint8_t offset) const;
   uint32_t Read32(uint8_t offset) const;
