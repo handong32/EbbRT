@@ -48,6 +48,7 @@
 #include "VMem.h"
 #include "VMemAllocator.h"
 #include "VirtioNet.h"
+#include "IxgbeDriver.h"
 
 namespace {
 bool started_once = false;
@@ -149,8 +150,10 @@ ebbrt::Main(multiboot::Information* mbi) {
 #ifdef __EBBRT_ENABLE_NETWORKING__
         NetworkManager::Init();
         pci::Init();
-        pci::RegisterProbe(VirtioNetDriver::Probe);
+        //pci::RegisterProbe(VirtioNetDriver::Probe);
+	pci::RegisterProbe(IxgbeDriver::Probe);
         pci::LoadDrivers();
+	ebbrt::kabort("ixgbe test\n");
         network_manager->StartDhcp().Then([](Future<void> fut) {
           fut.Get();
 // Dhcp completed

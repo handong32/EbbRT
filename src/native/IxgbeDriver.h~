@@ -2,8 +2,8 @@
 // Distributed under the Boost Software License, Version 1.0.
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
-#ifndef BAREMETAL_SRC_INCLUDE_EBBRT_IXGBE_DRIVER_H_
-#define BAREMETAL_SRC_INCLUDE_EBBRT_IXGBE_DRIVER_H_
+#ifndef BAREMETAL_SRC_INCLUDE_EBBRT_IXGBE_H_
+#define BAREMETAL_SRC_INCLUDE_EBBRT_IXGBE_H_
 
 #include "../Align.h"
 #include "Debug.h"
@@ -21,7 +21,8 @@ class IxgbeDriver {
     if (dev.GetVendorId() == kIxgbeVendorId &&
         dev.GetDeviceId() == kIxgbeDeviceId &&
 	dev.GetFunc() == 0) {
-	IxgbeDriver::Create(dev);
+      // dev.DumpAddress();
+      IxgbeDriver::Create(dev);
       return true;
     }
     return false;
@@ -39,31 +40,10 @@ class IxgbeDriver {
   }
 
  private:
-  void InitStruct();
-  void DeviceInfo();
   void Init();
-  void StopDevice();
-
-  void WriteRxctrl(uint32_t m);
-  void WriteDmatxctl(uint32_t m);
-  void WriteEimc(uint32_t m);
-  void WriteTxdctl(uint32_t n, uint32_t m);
-  void WriteRxdctl_1(uint32_t n, uint32_t m);
-  void WriteRxdctl_2(uint32_t n, uint32_t m);
-  void WriteCtrl(uint32_t m);
-  
-  void ReadEicr();
-  bool ReadStatus();
-  
   pci::Device& dev_;
   pci::Bar& bar0_;
-
-  struct IxgbeRegs {
-      volatile uint32_t kIxgbeCtrl;
-      volatile uint32_t kIxgbeCtrlBak;
-      volatile uint32_t kIxgbeStatus;
-  };
 };
 }  // namespace ebbrt
 
-#endif  // BAREMETAL_SRC_INCLUDE_EBBRT_IXGBE_DRIVER_H_
+#endif  // BAREMETAL_SRC_INCLUDE_EBBRT_IXGBE_H_

@@ -1,0 +1,22 @@
+//          Copyright Boston University SESA Group 2013 - 2014.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          http://www.boost.org/LICENSE_1_0.txt)
+#include "IxgbeDriver.h"
+
+#include "../StaticIOBuf.h"
+#include "../UniqueIOBuf.h"
+#include "Debug.h"
+#include "EventManager.h"
+#include "Clock.h"
+
+void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
+  auto ixgbe_dev = new IxgbeDriver(dev);
+  ixgbe_dev->Init();
+}
+
+void ebbrt::IxgbeDriver::Init() {
+    bar0_.Map();
+    ebbrt::clock::SleepMilli(200);
+    ebbrt::kprintf("Sleep 200 ms\n");
+}
