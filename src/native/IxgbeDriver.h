@@ -43,7 +43,8 @@ class IxgbeDriver {
   void DeviceInfo();
   void Init();
   void StopDevice();
-
+  void GlobalReset();
+  
   void WriteRxctrl(uint32_t m);
   void WriteDmatxctl(uint32_t m);
   void WriteEimc(uint32_t m);
@@ -54,6 +55,7 @@ class IxgbeDriver {
   
   void ReadEicr();
   bool ReadStatus();
+  void ReadCtrl();
   
   pci::Device& dev_;
   pci::Bar& bar0_;

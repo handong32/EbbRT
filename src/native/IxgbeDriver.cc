@@ -24,6 +24,10 @@ void ebbrt::IxgbeDriver::Init() {
   // DeviceInfo();
   // InitStruct();
   StopDevice();
+  GlobalReset();
+  ebbrt::clock::SleepMilli(50);
+  GlobalReset();
+  ebbrt::clock::SleepMilli(250);
 }
 
 void ebbrt::IxgbeDriver::InitStruct() {
@@ -177,8 +181,11 @@ void ebbrt::IxgbeDriver::WriteRxdctl_2(uint32_t n, uint32_t m) {
 }
 
 // 8.2.3.1.1 Device Control Register — CTRL (0x00000 / 0x00004;RW)
-void ebbrt::IxgbeDriver::WriteCtrl(uint32_t n, uint32_t m) {
-  bar0_.Write32(0x0, m);
+void ebbrt::IxgbeDriver::WriteCtrl(uint32_t m) { bar0_.Write32(0x0, m); }
+void ebbrt::IxgbeDriver::ReadCtrl() {
+  uint32_t reg;
+  reg = bar0_.Read32(0x0);
+  ebbrt::kprintf("0x00000: CTRL 0x%08X\n", reg);
 }
 
 // 8.2.3.1.2 Device Status Register — STATUS (0x00008; RO)
@@ -217,7 +224,23 @@ void ebbrt::IxgbeDriver::StopDevice() {
   ebbrt::clock::SleepMilli(2);
 
   // Master disable procedure
-  WriteCtrl(0x4);
-  while(ReadStatus() != 1);
+  WriteCtrl(0x4);  // PCIe Master Disable
+  while (ReadStatus() != 1)
+    ;
   ebbrt::kprintf("Ixgbe 82599 stop done\n");
+}
+
+void ebbrt::IxgbeDriver::GlobalReset() {
+  ebbrt::kprintf("%s ", __PRETTY_FUNCTION__);
+
+  WriteCtrl(0x8);  // Link Reset
+  WriteCtrl(0x4000000);  // Device Reset
+
+  // Note: To ensure that a global device reset has fully completed and that the
+  // 82599 responds to  subsequent accesses, programmers must wait
+  // before  approximately 1 ms after setting attempting to check
+  // if the bit has cleared or to access (read or write) any other device
+  // register.
+  ebbrt::clock::SleepMilli(2);
+  ReadCtrl();
 }
