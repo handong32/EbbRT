@@ -56,7 +56,7 @@ class IxgbeDriver {
   uint32_t ReadSwfwSyncSmBits(uint32_t m);
   void WriteSwfwSyncSmBits(uint32_t m);
   
-  void SwfwLockPhy();
+  bool SwfwLockPhy();
   void SwfwUnlockPhy();
   bool SwfwSemAcquire();
   void SwfwSemRelease();

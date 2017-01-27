@@ -326,6 +326,7 @@ void ebbrt::IxgbeDriver::WriteSwfwSyncSmBits(uint32_t m) {
 void ebbrt::IxgbeDriver::SwfwSemRelease() {
   SwsmSwesmbiClear();
   SwsmSmbiClear();
+  ebbrt::kprintf("%s\n", __FUNCTION__);
 }
 
 bool ebbrt::IxgbeDriver::SwfwSemAcquire() {
@@ -344,7 +345,7 @@ bool ebbrt::IxgbeDriver::SwfwSemAcquire() {
 }
 
 // 10.5.4 Software and Firmware Synchronization
-void ebbrt::IxgbeDriver::SwfwLockPhy() {
+bool ebbrt::IxgbeDriver::SwfwLockPhy() {
     bool good = false;
 
 again:
@@ -359,16 +360,27 @@ again:
       && (ReadSwfwSyncSmBits(0x40) == 0)) //FW_PHY_SM0 
   {
       WriteSwfwSyncSmBits(0x2); // SW_PHY_SM0
+      ebbrt::kprintf("SW_PHY_SMO written\n");
       good = true;
   }
   else if ((ReadSwfwSyncSmBits(0x4) == 0) //SW_PHY_SM1
 	   && (ReadSwfwSyncSmBits(0x80) == 0)) //FW_PHY_SM1
   {
       WriteSwfwSyncSmBits(0x4); // SW_PHY_SM1
+      ebbrt::kprintf("SW_PHY_SM1 written\n");
       good = true;
   }
 
   SwfwSemRelease();
+  
+  if(!good)
+  {
+      ebbrt::kprintf("%s: failed, trying again\n", __FUNCTION__);
+      ebbrt::clock::SleepMilli(20);
+      goto again;
+  }
+  
+  return true;
 }
 
 void ebbrt::IxgbeDriver::StopDevice() {
