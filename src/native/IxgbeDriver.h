@@ -42,8 +42,24 @@ class IxgbeDriver {
   void InitStruct();
   void DeviceInfo();
   void Init();
+  void PhyInit();
   void StopDevice();
   void GlobalReset();
+  
+  bool SwsmSmbiRead();
+  void SwsmSmbiClear();
+  
+  void SwsmSwesmbiSet();
+  bool SwsmSwesmbiRead();
+  void SwsmSwesmbiClear();
+
+  uint32_t ReadSwfwSyncSmBits(uint32_t m);
+  void WriteSwfwSyncSmBits(uint32_t m);
+  
+  void SwfwLockPhy();
+  void SwfwUnlockPhy();
+  bool SwfwSemAcquire();
+  void SwfwSemRelease();
   
   void WriteRxctrl(uint32_t m);
   void WriteDmatxctl(uint32_t m);
@@ -52,10 +68,20 @@ class IxgbeDriver {
   void WriteRxdctl_1(uint32_t n, uint32_t m);
   void WriteRxdctl_2(uint32_t n, uint32_t m);
   void WriteCtrl(uint32_t m);
-  
+  void WriteFcttv(uint32_t n, uint32_t m);
+  void WriteFcrtl(uint32_t n, uint32_t m);
+  void WriteFcrth(uint32_t n, uint32_t m);
+  void WriteFcrtv(uint32_t m);
+  void WriteFccfg(uint32_t m);
+  void WriteEerd(uint32_t m);
+
   void ReadEicr();
-  bool ReadStatus();
+  bool ReadStatusPcieMes();
+  uint8_t ReadStatusLanId();
   void ReadCtrl();
+  bool ReadEerdDone();
+  uint16_t ReadEerdData();
+  uint16_t ReadEeprom(uint16_t offset);
   
   pci::Device& dev_;
   pci::Bar& bar0_;

@@ -16,20 +16,6 @@ void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   ixgbe_dev->Init();
 }
 
-void ebbrt::IxgbeDriver::Init() {
-  ebbrt::kprintf("%s ", __PRETTY_FUNCTION__);
-  bar0_.Map();
-  ebbrt::clock::SleepMilli(200);
-  ebbrt::kprintf("Sleep 200 ms\n");
-  // DeviceInfo();
-  // InitStruct();
-  StopDevice();
-  GlobalReset();
-  ebbrt::clock::SleepMilli(50);
-  GlobalReset();
-  ebbrt::clock::SleepMilli(250);
-}
-
 void ebbrt::IxgbeDriver::InitStruct() {
   struct IxgbeRegs* r = static_cast<struct IxgbeRegs*>(bar0_.GetVaddr());
 
@@ -189,10 +175,200 @@ void ebbrt::IxgbeDriver::ReadCtrl() {
 }
 
 // 8.2.3.1.2 Device Status Register — STATUS (0x00008; RO)
-bool ebbrt::IxgbeDriver::ReadStatus() {
+bool ebbrt::IxgbeDriver::ReadStatusPcieMes() {
   auto reg = bar0_.Read32(0x8);
-  ebbrt::kprintf("0x00008: Status 0x%08X\n", reg);
+  ebbrt::kprintf("0x00008: Status PcieMes 0x%08X\n", reg);
   return !(reg & 0x80000);
+}
+uint8_t ebbrt::IxgbeDriver::ReadStatusLanId() {
+  auto reg = bar0_.Read32(0x8);
+  ebbrt::kprintf("0x00008: Status 0x%08X, Lan ID 0x%X\n", reg,
+                 (reg >> 2) & 0x3);
+  return (reg >> 2) & 0x3;
+}
+
+// 8.2.3.3.2 Flow Control Transmit Timer Value n — FCTTVn (0x03200 + 4*n,
+// n=0...3; RW)
+void ebbrt::IxgbeDriver::WriteFcttv(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x03200 + (4 * n), m);
+}
+
+// 8.2.3.3.3 Flow Control Receive Threshold Low — FCRTL[n] (0x03220 + 4*n,
+// n=0...7; RW)
+void ebbrt::IxgbeDriver::WriteFcrtl(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x03220 + (4 * n), m);
+}
+
+// 8.2.3.3.4 Flow Control Receive Threshold High — FCRTH[n] (0x03260 + 4*n,
+// n=0...7; RW)
+void ebbrt::IxgbeDriver::WriteFcrth(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x03260 + (4 * n), m);
+}
+
+// 8.2.3.3.5 Flow Control Refresh Threshold Value — FCRTV (0x032A0; RW)
+void ebbrt::IxgbeDriver::WriteFcrtv(uint32_t m) { bar0_.Write32(0x032A0, m); }
+
+// 8.2.3.3.7 Flow Control Configuration — FCCFG (0x03D00; RW)
+void ebbrt::IxgbeDriver::WriteFccfg(uint32_t m) { bar0_.Write32(0x03D00, m); }
+
+// 8.2.3.2.2 EEPROM Read Register — EERD (0x10014; RW)
+void ebbrt::IxgbeDriver::WriteEerd(uint32_t m) { bar0_.Write32(0x10014, m); }
+bool ebbrt::IxgbeDriver::ReadEerdDone() {
+  auto reg = bar0_.Read32(0x10014);
+  ebbrt::kprintf("0x10014: EERD 0x%08X\n", reg);
+  return !!(reg & 0x2);  // return true when Read Done = 1
+}
+
+uint16_t ebbrt::IxgbeDriver::ReadEerdData() {
+  auto reg = bar0_.Read32(0x10014);
+  return (reg >> 16) & 0xFFFF;
+}
+
+uint16_t ebbrt::IxgbeDriver::ReadEeprom(uint16_t offset) {
+  // ebbrt::kprintf("%s - writing 0x%08X\n", __PRETTY_FUNCTION__, offset << 2 |
+  // 1);
+  WriteEerd(offset << 2 | 1);
+  while (ReadEerdDone() == 0)
+    ;  // TODO: Timeout
+  return ReadEerdData();
+}
+
+// Checks the MAC's EEPROM to see if it supports a given SFP+ module type, if
+// 1360
+// so it returns the offsets to the phy init sequence block.
+// also based on
+// http://lxr.free-electrons.com/source/drivers/net/ethernet/intel/ixgbe/ixgbe_phy.c?v=3.14#L1395
+void ebbrt::IxgbeDriver::PhyInit() {
+
+  uint16_t list_offset;
+  uint16_t data_offset = 0x0;
+  // uint16_t data_value;
+  uint16_t sfp_id;
+  uint16_t sfp_type = 0x4; /* SPF_DA_CORE1 */
+
+  /* IXGBE_PHY_INIT_OFFSET_NL */
+  list_offset = ReadEeprom(0x002B);
+  ebbrt::kprintf("list_offset -> 0x%x\n", list_offset);
+
+  if ((list_offset == 0x0) || (list_offset == 0xFFFF)) {
+    return;
+  }
+
+  /* Shift offset to first ID word */
+  list_offset++;
+
+  sfp_id = ReadEeprom(list_offset);
+  ebbrt::kprintf("sfp_id -> %x\n", sfp_id);
+
+  while (sfp_id != 0xFFFF) {
+    if (sfp_id == sfp_type) {
+      list_offset++;
+      data_offset = ReadEeprom(list_offset);
+      if ((data_offset == 0x0) || (data_offset == 0xFFFF)) {
+        ebbrt::kprintf("sfp init failed\n");
+        return;
+      } else {
+        break;
+      }
+    } else {
+      list_offset += 2;
+      sfp_id = ReadEeprom(list_offset);
+    }
+    list_offset++;
+  }
+
+  if (sfp_id == 0xFFFF) {
+    ebbrt::kprintf("sfp init failed\n");
+    return;
+  }
+
+  ebbrt::kprintf("data offset -> 0x%x\n", data_offset);
+
+  SwfwLockPhy();
+}
+
+// 8.2.3.4.9 - Software Semaphore Register — SWSM (0x10140; RW)
+bool ebbrt::IxgbeDriver::SwsmSmbiRead() {
+  return !!(bar0_.Read32(0x10140) & 0x1);
+}
+bool ebbrt::IxgbeDriver::SwsmSwesmbiRead() {
+  return !(bar0_.Read32(0x10140) & 0x2);
+}
+void ebbrt::IxgbeDriver::SwsmSwesmbiSet() {
+  auto reg = bar0_.Read32(0x10140);
+  ebbrt::kprintf("%s: reg before: 0x%08X, reg after: 0x%08X\n", __FUNCTION__,
+                 reg, reg | 0x2);
+  bar0_.Write32(0x10140, reg | 0x2);
+}
+void ebbrt::IxgbeDriver::SwsmSmbiClear() {
+  auto reg = bar0_.Read32(0x10140);
+  ebbrt::kprintf("%s: reg before: 0x%08X, reg after: 0x%08X\n", __FUNCTION__,
+                 reg, reg & 0xFFFFFFFE);
+  bar0_.Write32(0x10140, reg & 0xFFFFFFFE);
+}
+void ebbrt::IxgbeDriver::SwsmSwesmbiClear() {
+  auto reg = bar0_.Read32(0x10140);
+  ebbrt::kprintf("%s: reg before: 0x%08X, reg after: 0x%08X\n", __FUNCTION__,
+                 reg, reg & 0xFFFFFFFD);
+  bar0_.Write32(0x10140, reg & 0xFFFFFFFD);
+}
+
+// 8.2.3.4.11 Software-Firmware Synchronization - SW_FW_SYNC (0x10160; RW)
+uint32_t ebbrt::IxgbeDriver::ReadSwfwSyncSmBits(uint32_t m) {
+  auto reg = bar0_.Read32(0x10160);
+  return (reg & m) & 0x3FF; // masking bits 9:0
+}
+void ebbrt::IxgbeDriver::WriteSwfwSyncSmBits(uint32_t m) {
+  auto reg = bar0_.Read32(0x10160);
+  bar0_.Write32(0x10160, reg | m);
+}
+
+void ebbrt::IxgbeDriver::SwfwSemRelease() {
+  SwsmSwesmbiClear();
+  SwsmSmbiClear();
+}
+
+bool ebbrt::IxgbeDriver::SwfwSemAcquire() {
+  // polls SWSM.SMBI until 0b is read or timeout
+  while (SwsmSmbiRead())
+    ;  // TODO: timeout after 10 ms
+
+  // writes 1b to SWSM.SWESMBI bit
+  SwsmSwesmbiSet();
+
+  // polls SWSM.SWESMBI bit until read as 1b
+  while (SwsmSwesmbiRead())
+    ;  // TODO: timeout of 3 secs
+
+  return true;
+}
+
+// 10.5.4 Software and Firmware Synchronization
+void ebbrt::IxgbeDriver::SwfwLockPhy() {
+    bool good = false;
+
+again:
+  if (!SwfwSemAcquire()) {
+    ebbrt::kabort("SwfwSemAcquire failed\n");
+  } else {
+    ebbrt::kprintf("SWSM Sem acquired\n");
+  }
+
+  if ((ReadStatusLanId() == 0) 
+      && (ReadSwfwSyncSmBits(0x2) == 0) //SW_PHY_SM0
+      && (ReadSwfwSyncSmBits(0x40) == 0)) //FW_PHY_SM0 
+  {
+      WriteSwfwSyncSmBits(0x2); // SW_PHY_SM0
+      good = true;
+  }
+  else if ((ReadSwfwSyncSmBits(0x4) == 0) //SW_PHY_SM1
+	   && (ReadSwfwSyncSmBits(0x80) == 0)) //FW_PHY_SM1
+  {
+      WriteSwfwSyncSmBits(0x4); // SW_PHY_SM1
+      good = true;
+  }
+
+  SwfwSemRelease();
 }
 
 void ebbrt::IxgbeDriver::StopDevice() {
@@ -225,7 +401,7 @@ void ebbrt::IxgbeDriver::StopDevice() {
 
   // Master disable procedure
   WriteCtrl(0x4);  // PCIe Master Disable
-  while (ReadStatus() != 1)
+  while (ReadStatusPcieMes() != 1)
     ;
   ebbrt::kprintf("Ixgbe 82599 stop done\n");
 }
@@ -243,4 +419,39 @@ void ebbrt::IxgbeDriver::GlobalReset() {
   // register.
   ebbrt::clock::SleepMilli(2);
   ReadCtrl();
+}
+
+void ebbrt::IxgbeDriver::Init() {
+  ebbrt::kprintf("%s ", __PRETTY_FUNCTION__);
+  bar0_.Map();
+  ebbrt::clock::SleepMilli(200);
+  ebbrt::kprintf("Sleep 200 ms\n");
+
+  // DeviceInfo();
+  // InitStruct();
+
+  StopDevice();
+  GlobalReset();
+  ebbrt::clock::SleepMilli(50);
+  GlobalReset();
+  ebbrt::clock::SleepMilli(250);
+
+  // disable interrupts
+  WriteEimc(0x7FFFFFFF);
+  ReadEicr();
+
+  // Initialize flow-control registers
+  for (auto i = 0; i < 8; i++) {
+    if (i < 4) {
+      WriteFcttv(i, 0x0);
+    }
+    WriteFcrtl(i, 0x0);
+    WriteFcrth(i, 0x0);
+  }
+
+  WriteFcrtv(0x0);
+  WriteFccfg(0x0);
+
+  // Initialize Phy
+  PhyInit();
 }
