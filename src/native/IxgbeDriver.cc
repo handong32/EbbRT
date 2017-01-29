@@ -233,16 +233,44 @@ uint16_t ebbrt::IxgbeDriver::ReadEeprom(uint16_t offset) {
   return ReadEerdData();
 }
 
+// 8.2.3.22.32 - Core Analog Configuration Register — CoreCTL (0x014F00; RW)
+void ebbrt::IxgbeDriver::WriteCorectl(uint16_t m) {
+    bar0_.Write32(0x014F00, 0x0 | m);
+}
+
+// 8.2.3.22.19 Auto Negotiation Control Register — AUTOC (0x042A0; RW)
+void ebbrt::IxgbeDriver::WriteAutoc(uint32_t m) {
+    auto reg = bar0_.Read32(0x042A0);
+    bar0_.Write32(0x042A0, reg | m);
+}
+uint8_t ebbrt::IxgbeDriver::ReadAutocRestartAn() {
+    auto reg = bar0_.Read32(0x042A0);
+    return (reg >> 12) & 0x1;
+}
+
+// 8.2.3.22.23 Auto Negotiation Link Partner Link Control Word 1 Register — ANLP1 (0x042B0; RO)
+uint8_t ebbrt::IxgbeDriver::ReadAnlp1() {
+    auto reg = bar0_.Read32(0x042B0);
+    return (reg >> 16) & 0xFF;
+}
+
+// 8.2.3.2.1 EEPROM/Flash Control Register — EEC (0x10010; RW)
+uint8_t ebbrt::IxgbeDriver::ReadEecAutoRd() {
+    auto reg = bar0_.Read32(0x10010);
+    return (reg >> 9) & 0xFF;
+}
+
 // Checks the MAC's EEPROM to see if it supports a given SFP+ module type, if
 // 1360
 // so it returns the offsets to the phy init sequence block.
 // also based on
 // http://lxr.free-electrons.com/source/drivers/net/ethernet/intel/ixgbe/ixgbe_phy.c?v=3.14#L1395
+// https://github.com/freebsd/freebsd/blob/386ddae58459341ec567604707805814a2128a57/sys/dev/ixgbe/ixgbe_82599.c#L173
 void ebbrt::IxgbeDriver::PhyInit() {
 
   uint16_t list_offset;
   uint16_t data_offset = 0x0;
-  // uint16_t data_value;
+  uint16_t data_value;
   uint16_t sfp_id;
   uint16_t sfp_type = 0x4; /* SPF_DA_CORE1 */
 
@@ -285,6 +313,41 @@ void ebbrt::IxgbeDriver::PhyInit() {
   ebbrt::kprintf("data offset -> 0x%x\n", data_offset);
 
   SwfwLockPhy();
+
+  data_value = ReadEeprom(++data_offset);
+  while (data_value != 0xFFFF) {
+      ebbrt::kprintf("data_value -> 0x%x\n", data_value);
+      WriteCorectl(data_value); //??
+      data_value = ReadEeprom(++data_offset);
+  }
+  SwfwUnlockPhy();
+  
+  ebbrt::clock::SleepMilli(20);
+  
+  WriteAutoc(0x0 << 13 | 0x1 << 12);
+  while(ReadAnlp1() != 0); // TODO: timeout
+
+  WriteAutoc(0x3 << 13 | 0x1 << 12);
+  while(ReadAutocRestartAn() != 0); // TODO: timeout
+
+  ebbrt::kprintf("PHY init done\n");
+}
+
+// 8.2.3.7.8 Receive Address Low — RAL[n] (0x0A200 + 8*n, n=0...127; RW)
+uint32_t ebbrt::IxgbeDriver::ReadRal(uint32_t n) {
+    auto reg = bar0_.Read32(0x0A200 + 8*n);
+    ebbrt::kprintf("%s %x\n", __FUNCTION__, reg);
+    return reg;
+}
+
+// 8.2.3.7.9 Receive Address High — RAH[n] (0x0A204 + 8*n, n=0...127; RW)
+uint16_t ebbrt::IxgbeDriver::ReadRah(uint32_t n) {
+    auto reg = bar0_.Read32(0x0A204 + 8*n);
+    ebbrt::kprintf("%s %x\n", __FUNCTION__, reg);
+    return (reg) & 0xFFFF;
+}
+uint8_t ebbrt::IxgbeDriver::ReadRahAv(uint32_t n) {
+    return (bar0_.Read32(0x0A204 + 8*n) >> 31) & 0xFF;
 }
 
 // 8.2.3.4.9 - Software Semaphore Register — SWSM (0x10140; RW)
@@ -315,12 +378,16 @@ void ebbrt::IxgbeDriver::SwsmSwesmbiClear() {
 
 // 8.2.3.4.11 Software-Firmware Synchronization - SW_FW_SYNC (0x10160; RW)
 uint32_t ebbrt::IxgbeDriver::ReadSwfwSyncSmBits(uint32_t m) {
-  auto reg = bar0_.Read32(0x10160);
+    auto reg = bar0_.Read32(0x10160);
   return (reg & m) & 0x3FF; // masking bits 9:0
 }
 void ebbrt::IxgbeDriver::WriteSwfwSyncSmBits(uint32_t m) {
   auto reg = bar0_.Read32(0x10160);
   bar0_.Write32(0x10160, reg | m);
+}
+void ebbrt::IxgbeDriver::WriteSwfwSyncSmBits2(uint32_t m) {
+  auto reg = bar0_.Read32(0x10160);
+  bar0_.Write32(0x10160, reg & m);
 }
 
 void ebbrt::IxgbeDriver::SwfwSemRelease() {
@@ -382,6 +449,25 @@ again:
   
   return true;
 }
+void ebbrt::IxgbeDriver::SwfwUnlockPhy() {
+    if (!SwfwSemAcquire()) {
+	ebbrt::kabort("SwfwSemAcquire failed\n");
+    } else {
+	ebbrt::kprintf("SWSM Sem acquired\n");
+    }
+
+    if (ReadStatusLanId() == 0) {
+	WriteSwfwSyncSmBits2(~0x2); //SW_PHY_SM0
+    }
+    else
+    {
+	WriteSwfwSyncSmBits2(~0x4); //SW_PHY_SM1
+    }
+    
+    SwfwSemRelease();
+
+    ebbrt::clock::SleepMilli(10);
+}
 
 void ebbrt::IxgbeDriver::StopDevice() {
   ebbrt::kprintf("%s ", __PRETTY_FUNCTION__);
@@ -434,6 +520,8 @@ void ebbrt::IxgbeDriver::GlobalReset() {
 }
 
 void ebbrt::IxgbeDriver::Init() {
+    uint64_t d_mac;
+    
   ebbrt::kprintf("%s ", __PRETTY_FUNCTION__);
   bar0_.Map();
   ebbrt::clock::SleepMilli(200);
@@ -466,4 +554,13 @@ void ebbrt::IxgbeDriver::Init() {
 
   // Initialize Phy
   PhyInit();
+
+  // Wait for EEPROM auto read
+  while (ReadEecAutoRd() == 0); // TODO: Timeout
+  ebbrt::kprintf("EEPROM auto read done\n");
+
+  ebbrt::clock::SleepMilli(200);
+  d_mac = ReadRal(0) | ((uint64_t) ReadRah(0) << 32);
+  ebbrt::kprintf("mac %x valid = %x\n", d_mac, ReadRahAv(0));
+  
 }

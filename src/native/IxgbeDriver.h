@@ -55,7 +55,8 @@ class IxgbeDriver {
 
   uint32_t ReadSwfwSyncSmBits(uint32_t m);
   void WriteSwfwSyncSmBits(uint32_t m);
-  
+  void WriteSwfwSyncSmBits2(uint32_t m);
+
   bool SwfwLockPhy();
   void SwfwUnlockPhy();
   bool SwfwSemAcquire();
@@ -75,6 +76,10 @@ class IxgbeDriver {
   void WriteFccfg(uint32_t m);
   void WriteEerd(uint32_t m);
 
+  void WriteCorectl(uint16_t m);
+
+  void WriteAutoc(uint32_t m);
+  
   void ReadEicr();
   bool ReadStatusPcieMes();
   uint8_t ReadStatusLanId();
@@ -82,6 +87,13 @@ class IxgbeDriver {
   bool ReadEerdDone();
   uint16_t ReadEerdData();
   uint16_t ReadEeprom(uint16_t offset);
+  uint8_t ReadAnlp1();
+  uint8_t ReadAutocRestartAn();
+  uint8_t ReadEecAutoRd();
+
+  uint32_t ReadRal(uint32_t n);
+  uint16_t ReadRah(uint32_t n);
+  uint8_t ReadRahAv(uint32_t n);
   
   pci::Device& dev_;
   pci::Bar& bar0_;
