@@ -126,6 +126,13 @@ void ebbrt::IxgbeDriver::WriteDmatxctl(uint32_t m) {
   bar0_.Write32(0x04A80, reg & m);
 }
 
+// 8.2.3.5.18 - General Purpose Interrupt Enable — GPIE (0x00898; RW)
+void ebbrt::IxgbeDriver::WriteGpie(uint32_t m) {
+  uint32_t reg;
+  reg = bar0_.Read32(0x00898);
+  bar0_.Write32(0x00898, reg | m);
+}
+
 // 8.2.3.5.1 Extended Interrupt Cause Register- EICR (0x00800; RW1C)
 void ebbrt::IxgbeDriver::ReadEicr() {
   /* Note
@@ -144,6 +151,11 @@ void ebbrt::IxgbeDriver::ReadEicr() {
   reg = bar0_.Read32(0x00800);
   ebbrt::kprintf("Second Read - EICR 0x%08X\n", reg);
 }
+void ebbrt::IxgbeDriver::WriteEicr(uint32_t m) { bar0_.Write32(0x00800, m); }
+
+// 8.2.3.5.3 Extended Interrupt Mask Set/Read Register- EIMS (0x00880; RWS)
+uint32_t ebbrt::IxgbeDriver::ReadEims() { return bar0_.Read32(0x00880); }
+void ebbrt::IxgbeDriver::WriteEims(uint32_t m) { bar0_.Write32(0x00880, m); }
 
 // 8.2.3.5.4 Extended Interrupt Mask Clear Register- EIMC (0x00888; WO)
 void ebbrt::IxgbeDriver::WriteEimc(uint32_t m) { bar0_.Write32(0x00888, m); }
@@ -235,29 +247,43 @@ uint16_t ebbrt::IxgbeDriver::ReadEeprom(uint16_t offset) {
 
 // 8.2.3.22.32 - Core Analog Configuration Register — CoreCTL (0x014F00; RW)
 void ebbrt::IxgbeDriver::WriteCorectl(uint16_t m) {
-    bar0_.Write32(0x014F00, 0x0 | m);
+  bar0_.Write32(0x014F00, 0x0 | m);
 }
 
 // 8.2.3.22.19 Auto Negotiation Control Register — AUTOC (0x042A0; RW)
 void ebbrt::IxgbeDriver::WriteAutoc(uint32_t m) {
-    auto reg = bar0_.Read32(0x042A0);
-    bar0_.Write32(0x042A0, reg | m);
+  auto reg = bar0_.Read32(0x042A0);
+  bar0_.Write32(0x042A0, reg | m);
 }
 uint8_t ebbrt::IxgbeDriver::ReadAutocRestartAn() {
-    auto reg = bar0_.Read32(0x042A0);
-    return (reg >> 12) & 0x1;
+  auto reg = bar0_.Read32(0x042A0);
+  return (reg >> 12) & 0x1;
 }
 
-// 8.2.3.22.23 Auto Negotiation Link Partner Link Control Word 1 Register — ANLP1 (0x042B0; RO)
+// 8.2.3.22.23 Auto Negotiation Link Partner Link Control Word 1 Register —
+// ANLP1 (0x042B0; RO)
 uint8_t ebbrt::IxgbeDriver::ReadAnlp1() {
-    auto reg = bar0_.Read32(0x042B0);
-    return (reg >> 16) & 0xFF;
+  auto reg = bar0_.Read32(0x042B0);
+  return (reg >> 16) & 0xFF;
 }
 
 // 8.2.3.2.1 EEPROM/Flash Control Register — EEC (0x10010; RW)
 uint8_t ebbrt::IxgbeDriver::ReadEecAutoRd() {
     auto reg = bar0_.Read32(0x10010);
-    return (reg >> 9) & 0xFF;
+  return (reg >> 9) & 0xFF;
+}
+
+// 8.2.3.7.7 Multicast Table Array — MTA[n] (0x05200 + 4*n, n=0...127; RW)
+void ebbrt::IxgbeDriver::WriteMta(uint32_t n, uint32_t m) { bar0_.Write32(0x05200 + (4 * n), m); }
+
+// 8.2.3.7.11 VLAN Filter Table Array — VFTA[n] (0x0A000 + 4*n,n=0...127; RW)
+void ebbrt::IxgbeDriver::WriteVfta(uint32_t n, uint32_t m) { bar0_.Write32(0x0A000 + (4 * n), m); }
+
+// 8.2.3.27.15 PF VM VLAN Pool Filter — PFVLVF[n] (0x0F100 + 4*n, n=0...63; RW)
+void ebbrt::IxgbeDriver::WritePfvlvf(uint32_t n, uint32_t m) {
+    //auto reg = bar0_.Read32(0x0F100 + 4*n);
+    //bar0_.Write32(0x0F100 + 4*n, reg | m);
+    bar0_.Write32(0x0F100 + 4*n, m);
 }
 
 // Checks the MAC's EEPROM to see if it supports a given SFP+ module type, if
@@ -316,38 +342,50 @@ void ebbrt::IxgbeDriver::PhyInit() {
 
   data_value = ReadEeprom(++data_offset);
   while (data_value != 0xFFFF) {
-      ebbrt::kprintf("data_value -> 0x%x\n", data_value);
-      WriteCorectl(data_value); //??
-      data_value = ReadEeprom(++data_offset);
+    ebbrt::kprintf("data_value -> 0x%x\n", data_value);
+    WriteCorectl(data_value);  //??
+    data_value = ReadEeprom(++data_offset);
   }
   SwfwUnlockPhy();
-  
+
   ebbrt::clock::SleepMilli(20);
-  
+
   WriteAutoc(0x0 << 13 | 0x1 << 12);
-  while(ReadAnlp1() != 0); // TODO: timeout
+  while (ReadAnlp1() != 0)
+    ;  // TODO: timeout
 
   WriteAutoc(0x3 << 13 | 0x1 << 12);
-  while(ReadAutocRestartAn() != 0); // TODO: timeout
+  while (ReadAutocRestartAn() != 0)
+    ;  // TODO: timeout
 
   ebbrt::kprintf("PHY init done\n");
 }
 
 // 8.2.3.7.8 Receive Address Low — RAL[n] (0x0A200 + 8*n, n=0...127; RW)
 uint32_t ebbrt::IxgbeDriver::ReadRal(uint32_t n) {
-    auto reg = bar0_.Read32(0x0A200 + 8*n);
-    ebbrt::kprintf("%s %x\n", __FUNCTION__, reg);
-    return reg;
+  auto reg = bar0_.Read32(0x0A200 + 8 * n);
+  ebbrt::kprintf("%s %x\n", __FUNCTION__, reg);
+  return reg;
+}
+void ebbrt::IxgbeDriver::WriteRal(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x0A200 + (8 * n), m);
 }
 
 // 8.2.3.7.9 Receive Address High — RAH[n] (0x0A204 + 8*n, n=0...127; RW)
 uint16_t ebbrt::IxgbeDriver::ReadRah(uint32_t n) {
-    auto reg = bar0_.Read32(0x0A204 + 8*n);
-    ebbrt::kprintf("%s %x\n", __FUNCTION__, reg);
-    return (reg) & 0xFFFF;
+  auto reg = bar0_.Read32(0x0A204 + 8 * n);
+  return (reg)&0xFFFF;
 }
 uint8_t ebbrt::IxgbeDriver::ReadRahAv(uint32_t n) {
-    return (bar0_.Read32(0x0A204 + 8*n) >> 31) & 0xFF;
+  return (bar0_.Read32(0x0A204 + 8 * n) >> 31) & 0xFF;
+}
+void ebbrt::IxgbeDriver::WriteRah(uint32_t n, uint32_t m) {
+    bar0_.Write32(0x0A204 + (8 * n), m);
+}
+
+// 8.2.3.7.10 MAC Pool Select Array — MPSAR[n] (0x0A600 + 4*n, n=0...255; RW)
+void ebbrt::IxgbeDriver::WriteMpsar(uint32_t n, uint32_t m) {
+    bar0_.Write32(0x0A600 + 4*n, m);
 }
 
 // 8.2.3.4.9 - Software Semaphore Register — SWSM (0x10140; RW)
@@ -376,10 +414,16 @@ void ebbrt::IxgbeDriver::SwsmSwesmbiClear() {
   bar0_.Write32(0x10140, reg & 0xFFFFFFFD);
 }
 
+// 8.2.3.22.20 Link Status Register — LINKS (0x042A4; RO)
+bool ebbrt::IxgbeDriver::ReadLinksLinkUp() {
+  auto reg = bar0_.Read32(0x042A4);
+  return ((reg >> 30) & 0x1) == 1;
+}
+
 // 8.2.3.4.11 Software-Firmware Synchronization - SW_FW_SYNC (0x10160; RW)
 uint32_t ebbrt::IxgbeDriver::ReadSwfwSyncSmBits(uint32_t m) {
-    auto reg = bar0_.Read32(0x10160);
-  return (reg & m) & 0x3FF; // masking bits 9:0
+  auto reg = bar0_.Read32(0x10160);
+  return (reg & m) & 0x3FF;  // masking bits 9:0
 }
 void ebbrt::IxgbeDriver::WriteSwfwSyncSmBits(uint32_t m) {
   auto reg = bar0_.Read32(0x10160);
@@ -413,7 +457,7 @@ bool ebbrt::IxgbeDriver::SwfwSemAcquire() {
 
 // 10.5.4 Software and Firmware Synchronization
 bool ebbrt::IxgbeDriver::SwfwLockPhy() {
-    bool good = false;
+  bool good = false;
 
 again:
   if (!SwfwSemAcquire()) {
@@ -422,51 +466,46 @@ again:
     ebbrt::kprintf("SWSM Sem acquired\n");
   }
 
-  if ((ReadStatusLanId() == 0) 
-      && (ReadSwfwSyncSmBits(0x2) == 0) //SW_PHY_SM0
-      && (ReadSwfwSyncSmBits(0x40) == 0)) //FW_PHY_SM0 
+  if ((ReadStatusLanId() == 0) && (ReadSwfwSyncSmBits(0x2) == 0)  // SW_PHY_SM0
+      && (ReadSwfwSyncSmBits(0x40) == 0))  // FW_PHY_SM0
   {
-      WriteSwfwSyncSmBits(0x2); // SW_PHY_SM0
-      ebbrt::kprintf("SW_PHY_SMO written\n");
-      good = true;
-  }
-  else if ((ReadSwfwSyncSmBits(0x4) == 0) //SW_PHY_SM1
-	   && (ReadSwfwSyncSmBits(0x80) == 0)) //FW_PHY_SM1
+    WriteSwfwSyncSmBits(0x2);  // SW_PHY_SM0
+    ebbrt::kprintf("SW_PHY_SMO written\n");
+    good = true;
+  } else if ((ReadSwfwSyncSmBits(0x4) == 0)  // SW_PHY_SM1
+             && (ReadSwfwSyncSmBits(0x80) == 0))  // FW_PHY_SM1
   {
-      WriteSwfwSyncSmBits(0x4); // SW_PHY_SM1
-      ebbrt::kprintf("SW_PHY_SM1 written\n");
-      good = true;
+    WriteSwfwSyncSmBits(0x4);  // SW_PHY_SM1
+    ebbrt::kprintf("SW_PHY_SM1 written\n");
+    good = true;
   }
 
   SwfwSemRelease();
-  
-  if(!good)
-  {
-      ebbrt::kprintf("%s: failed, trying again\n", __FUNCTION__);
-      ebbrt::clock::SleepMilli(20);
-      goto again;
+
+  if (!good) {
+    ebbrt::kprintf("%s: failed, trying again\n", __FUNCTION__);
+    ebbrt::clock::SleepMilli(20);
+    goto again;
   }
-  
+
   return true;
 }
 void ebbrt::IxgbeDriver::SwfwUnlockPhy() {
-    if (!SwfwSemAcquire()) {
-	ebbrt::kabort("SwfwSemAcquire failed\n");
-    } else {
-	ebbrt::kprintf("SWSM Sem acquired\n");
-    }
+  if (!SwfwSemAcquire()) {
+    ebbrt::kabort("SwfwSemAcquire failed\n");
+  } else {
+    ebbrt::kprintf("SWSM Sem acquired\n");
+  }
 
-    if (ReadStatusLanId() == 0) {
-	WriteSwfwSyncSmBits2(~0x2); //SW_PHY_SM0
-    }
-    else
-    {
-	WriteSwfwSyncSmBits2(~0x4); //SW_PHY_SM1
-    }
-    
-    SwfwSemRelease();
+  if (ReadStatusLanId() == 0) {
+    WriteSwfwSyncSmBits2(~0x2);  // SW_PHY_SM0
+  } else {
+    WriteSwfwSyncSmBits2(~0x4);  // SW_PHY_SM1
+  }
 
-    ebbrt::clock::SleepMilli(10);
+  SwfwSemRelease();
+
+  ebbrt::clock::SleepMilli(10);
 }
 
 void ebbrt::IxgbeDriver::StopDevice() {
@@ -520,8 +559,8 @@ void ebbrt::IxgbeDriver::GlobalReset() {
 }
 
 void ebbrt::IxgbeDriver::Init() {
-    uint64_t d_mac;
-    
+  uint64_t d_mac;
+
   ebbrt::kprintf("%s ", __PRETTY_FUNCTION__);
   bar0_.Map();
   ebbrt::clock::SleepMilli(200);
@@ -556,11 +595,50 @@ void ebbrt::IxgbeDriver::Init() {
   PhyInit();
 
   // Wait for EEPROM auto read
-  while (ReadEecAutoRd() == 0); // TODO: Timeout
+  while (ReadEecAutoRd() == 0)
+    ;  // TODO: Timeout
   ebbrt::kprintf("EEPROM auto read done\n");
 
   ebbrt::clock::SleepMilli(200);
-  d_mac = ReadRal(0) | ((uint64_t) ReadRah(0) << 32);
-  ebbrt::kprintf("mac %x valid = %x\n", d_mac, ReadRahAv(0));
+  d_mac = ReadRal(0) | ((uint64_t)ReadRah(0) << 32);
+  ebbrt::kprintf("mac %p valid = %x\n", d_mac, ReadRahAv(0));
+
+  // Wait for link to come up
+  while (!ReadLinksLinkUp())
+    ;  // TODO: timeout
+  ebbrt::kprintf("Link is up\n");
+  ebbrt::clock::SleepMilli(50);
+
+  // Initialize interrupts
+  WriteEicr(0xFFFFFFFF);
+
+  // using interrupts I believe
+  WriteGpie(0x1 << 6);  // EIMEN bit 6
+  WriteEimc(ReadEims());
+  WriteEims(0x7FFFFFFF);
+  // ebbrt::kprintf("EIMS: %p\n", ReadEims());
+
+  // Initialize RX filters
+  for (auto i = 1; i < 128; i++) {
+    WriteRal(i, 0x0);
+    WriteRah(i, 0x0);
+  }
+
+  for (auto i = 0; i < 128; i++) {
+    WriteMta(i, 0x0);
+  }
+
+  for (auto i = 0; i < 128; i++) {
+    WriteVfta(i, 0x0);
+  }
+
+  for(auto i = 0; i < 64; i++) {
+      WritePfvlvf(i, 0x1 << 31); //VI_En bit 31
+  }
+  
+  for(auto i = 0; i < 256; i++) {
+      WriteMpsar(i, 0x0);
+  }
+
   
 }

@@ -80,6 +80,19 @@ class IxgbeDriver {
 
   void WriteAutoc(uint32_t m);
   
+  void WriteEicr(uint32_t m);
+  void WriteGpie(uint32_t m);
+  
+  void WriteEims(uint32_t m);
+  
+  void WriteRal(uint32_t n, uint32_t m);
+  void WriteRah(uint32_t n, uint32_t m);
+
+  void WriteMta(uint32_t n, uint32_t m);
+  void WriteVfta(uint32_t n, uint32_t m);
+  void WritePfvlvf(uint32_t n, uint32_t m);
+  void WriteMpsar(uint32_t n, uint32_t m)
+
   void ReadEicr();
   bool ReadStatusPcieMes();
   uint8_t ReadStatusLanId();
@@ -90,11 +103,14 @@ class IxgbeDriver {
   uint8_t ReadAnlp1();
   uint8_t ReadAutocRestartAn();
   uint8_t ReadEecAutoRd();
-
+  uint32_t ReadEims();
+  
   uint32_t ReadRal(uint32_t n);
   uint16_t ReadRah(uint32_t n);
   uint8_t ReadRahAv(uint32_t n);
   
+  bool ReadLinksLinkUp();
+
   pci::Device& dev_;
   pci::Bar& bar0_;
 
