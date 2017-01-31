@@ -186,6 +186,13 @@ void ebbrt::IxgbeDriver::ReadCtrl() {
   ebbrt::kprintf("0x00000: CTRL 0x%08X\n", reg);
 }
 
+// 8.2.3.7.1 Filter Control Register — FCTRL (0x05080; RW)
+void ebbrt::IxgbeDriver::WriteFctrl(uint32_t m) { bar0_.Write32(0x05080, m); }
+
+// 8.2.3.24.9 Flexible Host Filter Table Registers — FHFT (0x09000 — 0x093FC and 0x09800 — 0x099FC; RW)
+void ebbrt::IxgbeDriver::WriteFhft_1(uint32_t n, uint32_t m) { bar0_.Write32(0x09000, m); }
+void ebbrt::IxgbeDriver::WriteFhft_2(uint32_t n, uint32_t m) { bar0_.Write32(0x09800, m); }
+
 // 8.2.3.1.2 Device Status Register — STATUS (0x00008; RO)
 bool ebbrt::IxgbeDriver::ReadStatusPcieMes() {
   auto reg = bar0_.Read32(0x8);
@@ -269,21 +276,25 @@ uint8_t ebbrt::IxgbeDriver::ReadAnlp1() {
 
 // 8.2.3.2.1 EEPROM/Flash Control Register — EEC (0x10010; RW)
 uint8_t ebbrt::IxgbeDriver::ReadEecAutoRd() {
-    auto reg = bar0_.Read32(0x10010);
+  auto reg = bar0_.Read32(0x10010);
   return (reg >> 9) & 0xFF;
 }
 
 // 8.2.3.7.7 Multicast Table Array — MTA[n] (0x05200 + 4*n, n=0...127; RW)
-void ebbrt::IxgbeDriver::WriteMta(uint32_t n, uint32_t m) { bar0_.Write32(0x05200 + (4 * n), m); }
+void ebbrt::IxgbeDriver::WriteMta(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x05200 + (4 * n), m);
+}
 
 // 8.2.3.7.11 VLAN Filter Table Array — VFTA[n] (0x0A000 + 4*n,n=0...127; RW)
-void ebbrt::IxgbeDriver::WriteVfta(uint32_t n, uint32_t m) { bar0_.Write32(0x0A000 + (4 * n), m); }
+void ebbrt::IxgbeDriver::WriteVfta(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x0A000 + (4 * n), m);
+}
 
 // 8.2.3.27.15 PF VM VLAN Pool Filter — PFVLVF[n] (0x0F100 + 4*n, n=0...63; RW)
 void ebbrt::IxgbeDriver::WritePfvlvf(uint32_t n, uint32_t m) {
-    //auto reg = bar0_.Read32(0x0F100 + 4*n);
-    //bar0_.Write32(0x0F100 + 4*n, reg | m);
-    bar0_.Write32(0x0F100 + 4*n, m);
+  // auto reg = bar0_.Read32(0x0F100 + 4*n);
+  // bar0_.Write32(0x0F100 + 4*n, reg | m);
+  bar0_.Write32(0x0F100 + 4 * n, m);
 }
 
 // Checks the MAC's EEPROM to see if it supports a given SFP+ module type, if
@@ -380,13 +391,79 @@ uint8_t ebbrt::IxgbeDriver::ReadRahAv(uint32_t n) {
   return (bar0_.Read32(0x0A204 + 8 * n) >> 31) & 0xFF;
 }
 void ebbrt::IxgbeDriver::WriteRah(uint32_t n, uint32_t m) {
-    bar0_.Write32(0x0A204 + (8 * n), m);
+  bar0_.Write32(0x0A204 + (8 * n), m);
 }
 
 // 8.2.3.7.10 MAC Pool Select Array — MPSAR[n] (0x0A600 + 4*n, n=0...255; RW)
 void ebbrt::IxgbeDriver::WriteMpsar(uint32_t n, uint32_t m) {
-    bar0_.Write32(0x0A600 + 4*n, m);
+  bar0_.Write32(0x0A600 + 4 * n, m);
 }
+
+// 8.2.3.7.19 Five tuple Queue Filter — FTQF[n] (0x0E600 + 4*n,n=0...127; RW)
+void ebbrt::IxgbeDriver::WriteFtqf(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x0E600 + 4 * n, m);
+}
+
+// 8.2.3.7.16 Source Address Queue Filter — SAQF[n] (0x0E000 + 4*n, n=0...127;
+// RW)
+void ebbrt::IxgbeDriver::WriteSaqf(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x0E000 + 4 * n, m);
+}
+
+// 8.2.3.7.17 Destination Address Queue Filter — DAQF[n] (0x0E200 + 4*n,
+// n=0...127; RW)
+void ebbrt::IxgbeDriver::WriteDaqf(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x0E200 + 4 * n, m);
+}
+
+// 8.2.3.7.18 Source Destination Port Queue Filter — SDPQF[n] (0x0E400 + 4*n,
+// n=0...127; RW)
+void ebbrt::IxgbeDriver::WriteSdpqf(uint32_t n, uint32_t m) {
+    bar0_.Write32(0x0E400 + 4 * n, m);
+}
+
+// 8.2.3.27.17 PF Unicast Table Array — PFUTA[n] (0x0F400 + 4*n, n=0...127; RW)
+void ebbrt::IxgbeDriver::WritePfuta(uint32_t n, uint32_t m) {
+    bar0_.Write32(0x0F400 + 4*n, m);
+}
+
+// 8.2.3.7.3 Multicast Control Register — MCSTCTRL (0x05090; RW)
+void ebbrt::IxgbeDriver::WriteMcstctrl(uint32_t m) {
+    auto reg = bar0_.Read32(0x05090);
+    bar0_.Write32(0x05090, reg | m);
+} 
+
+// 8.2.3.10.13 DCB Transmit Descriptor Plane Queue Select — RTTDQSEL (0x04904; RW)
+void ebbrt::IxgbeDriver::WriteRttdqsel(uint32_t m) {
+    auto reg = bar0_.Read32(0x04904);
+    bar0_.Write32(0x04904, reg | m);
+}
+
+// 8.2.3.10.16 DCB Transmit Rate-Scheduler Config — RTTBCNRC (0x04984; RW)
+void ebbrt::IxgbeDriver::WriteRttbcnrc(uint32_t m) {
+    bar0_.Write32(0x04984, m);
+}
+
+// 8.2.3.11.2 Tx DCA Control Registers — DCA_TXCTRL[n] (0x0600C + 0x40*n, n=0...127; RW)
+void ebbrt::IxgbeDriver::WriteDcaTxctrlTxdescWbro(uint32_t n, uint32_t m) {
+    auto reg = bar0_.Read32(0x0600C + 0x40*n);
+    //ebbrt::kprintf("%s: 0x%08X -> 0x%08X\n", __FUNCTION__, reg, reg & m);
+    bar0_.Write32(0x0600C + 0x40*n, reg & m);
+}
+
+// 8.2.3.11.1 Rx DCA Control Register — DCA_RXCTRL[n] (0x0100C + 0x40*n, n=0...63 and 0x0D00C + 0x40*(n-64),
+// n=64...127 / 0x02200 + 4*n, [n=0...15]; RW)
+void ebbrt::IxgbeDriver::WriteDcaRxctrl_1(uint32_t n, uint32_t m) {
+    auto reg = bar0_.Read32(0x0100C + 0x40*n);
+    bar0_.Write32(0x0100C + 0x40*n, reg & m);
+}
+
+//void ebbrt::IxgbeDriver::WriteDcaRxctrl_1_RxdataWrro(uint32_t n, uint32_t m);
+void ebbrt::IxgbeDriver::WriteDcaRxctrl_2(uint32_t n, uint32_t m) {
+    auto reg = bar0_.Read32(0x0D00C + 0x40*n);
+    bar0_.Write32(0x0D00C + 0x40*n, reg & m);
+}
+//void ebbrt::IxgbeDriver::WriteDcaRxctrl_2_RxdataWrro(uint32_t n, uint32_t m);
 
 // 8.2.3.4.9 - Software Semaphore Register — SWSM (0x10140; RW)
 bool ebbrt::IxgbeDriver::SwsmSmbiRead() {
@@ -396,7 +473,7 @@ bool ebbrt::IxgbeDriver::SwsmSwesmbiRead() {
   return !(bar0_.Read32(0x10140) & 0x2);
 }
 void ebbrt::IxgbeDriver::SwsmSwesmbiSet() {
-  auto reg = bar0_.Read32(0x10140);
+    auto reg = bar0_.Read32(0x10140);
   ebbrt::kprintf("%s: reg before: 0x%08X, reg after: 0x%08X\n", __FUNCTION__,
                  reg, reg | 0x2);
   bar0_.Write32(0x10140, reg | 0x2);
@@ -558,6 +635,16 @@ void ebbrt::IxgbeDriver::GlobalReset() {
   ReadCtrl();
 }
 
+/**
+ *  ixgbe_init_hw_generic - Generic hardware initialization
+ *  @hw: pointer to hardware structure
+ *
+ *  Initialize the hardware by resetting the hardware, filling the bus info
+ *  structure and media type, clears all on chip counters, initializes receive
+ *  address registers, multicast table, VLAN filter table, calls routine to set
+ *  up link and flow control settings, and leaves transmit and receive units
+ *  disabled and uninitialized
+ **/
 void ebbrt::IxgbeDriver::Init() {
   uint64_t d_mac;
 
@@ -618,27 +705,91 @@ void ebbrt::IxgbeDriver::Init() {
   WriteEims(0x7FFFFFFF);
   // ebbrt::kprintf("EIMS: %p\n", ReadEims());
 
+  /* FreeBSD: 
+   * ixgbe_common.c - s32 ixgbe_init_rx_addrs_generic(struct ixgbe_hw *hw)
+   * Places the MAC address in receive address register 0 and clears the rest
+   *  of the receive address registers. Clears the multicast table. Assumes
+   *  the receiver is in reset when the routine is called.
+   */
   // Initialize RX filters
+
+  /* Zero out the other receive addresses. */
   for (auto i = 1; i < 128; i++) {
     WriteRal(i, 0x0);
     WriteRah(i, 0x0);
   }
 
+  //clear mta
   for (auto i = 0; i < 128; i++) {
     WriteMta(i, 0x0);
   }
 
+  // No init uta tables?
+
+  
+  //set vlan filter table
   for (auto i = 0; i < 128; i++) {
     WriteVfta(i, 0x0);
   }
 
-  for(auto i = 0; i < 64; i++) {
-      WritePfvlvf(i, 0x1 << 31); //VI_En bit 31
-  }
-  
-  for(auto i = 0; i < 256; i++) {
-      WriteMpsar(i, 0x0);
+  for (auto i = 0; i < 64; i++) {
+    WritePfvlvf(i, 0x1 << 31);  // VI_En bit 31
   }
 
+  for (auto i = 0; i < 256; i++) {
+    WriteMpsar(i, 0x0);
+  }
+
+  for (auto i = 0; i < 128; i++) {
+    WriteFtqf(i, 0x0);
+    WriteSaqf(i, 0x0);
+    WriteDaqf(i, 0x0);
+    WriteSdpqf(i, 0x0);
+  }
+  
+  //FreeBSD if_ix.c - ixgbe_initialize_receive_units - Enable broadcast accept
+  WriteFctrl(0x1 << 10); // Set BAM = 1
+  
+  // not sure why initing these tables?
+  for(auto i = 0; i < 128; i++)
+  {
+      WriteFhft_1(i, 0x0);
+      if(i < 64)
+      {
+	  WriteFhft_2(i, 0x0);
+      }
+  }
+
+  
+  //PF Unicast Table Array
+  for(auto i = 0; i < 128; i++)
+  {
+      WritePfuta(i, 0x0);
+  }
+  
+  // Multicast Control Register
+  WriteMcstctrl(0x1 << 2); // setting Multicast filter enable
+
+  // from freeBSD/arrakis - ixgbe_common.c - ixgbe_start_hw_gen2
+  // clear the rate limiters
+  for(auto i = 0; i < 128; i++) {
+      WriteRttdqsel(i);
+      WriteRttbcnrc(0x0);
+  }  
+
+  // disable relaxed ordering
+  for(auto i = 0; i < 128; i ++) {
+      WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11)); // Txdesc_Wbro 
+
+      if (i < 64) {
+	  WriteDcaRxctrl_1(i, ~(0x1 << 15)); //Rx split header relax order enable, bit 15
+	  WriteDcaRxctrl_1(i, ~(0x1 << 13)); //Rx data Write Relax Order Enable, bit 13 
+      } else {
+	  WriteDcaRxctrl_1(i - 64, ~(0x1 << 15)); //Rx split header relax order enable, bit 15
+	  WriteDcaRxctrl_1(i - 64, ~(0x1 << 13)); //Rx data Write Relax Order Enable, bit 13 
+      }
+  }
+
+  
   
 }

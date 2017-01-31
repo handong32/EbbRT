@@ -91,7 +91,27 @@ class IxgbeDriver {
   void WriteMta(uint32_t n, uint32_t m);
   void WriteVfta(uint32_t n, uint32_t m);
   void WritePfvlvf(uint32_t n, uint32_t m);
-  void WriteMpsar(uint32_t n, uint32_t m)
+  void WriteMpsar(uint32_t n, uint32_t m);
+  void WriteFtqf(uint32_t n, uint32_t m);
+  void WriteSaqf(uint32_t n, uint32_t m);
+  void WriteDaqf(uint32_t n, uint32_t m);
+  void WriteSdpqf(uint32_t n, uint32_t m);
+  
+  void WriteFctrl(uint32_t m);
+  void WriteFhft_1(uint32_t n, uint32_t m);
+  void WriteFhft_2(uint32_t n, uint32_t m);
+
+  void WritePfuta(uint32_t n, uint32_t m);
+  void WriteMcstctrl(uint32_t m);
+
+  void WriteRttdqsel(uint32_t m);
+  void WriteRttbcnrc(uint32_t m);
+  
+  void WriteDcaTxctrlTxdescWbro(uint32_t n, uint32_t m);
+  void WriteDcaRxctrl_1(uint32_t n, uint32_t m);
+  //void WriteDcaRxctrl_1_RxdataWrro(uint32_t n, uint32_t m);
+  void WriteDcaRxctrl_2(uint32_t n, uint32_t m);
+  //void WriteDcaRxctrl_2_RxdataWrro(uint32_t n, uint32_t m);
 
   void ReadEicr();
   bool ReadStatusPcieMes();
