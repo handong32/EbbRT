@@ -109,9 +109,7 @@ class IxgbeDriver {
   
   void WriteDcaTxctrlTxdescWbro(uint32_t n, uint32_t m);
   void WriteDcaRxctrl_1(uint32_t n, uint32_t m);
-  //void WriteDcaRxctrl_1_RxdataWrro(uint32_t n, uint32_t m);
   void WriteDcaRxctrl_2(uint32_t n, uint32_t m);
-  //void WriteDcaRxctrl_2_RxdataWrro(uint32_t n, uint32_t m);
 
   void ReadEicr();
   bool ReadStatusPcieMes();
@@ -128,6 +126,7 @@ class IxgbeDriver {
   uint32_t ReadRal(uint32_t n);
   uint16_t ReadRah(uint32_t n);
   uint8_t ReadRahAv(uint32_t n);
+  uint32_t ReadTpr();
   
   bool ReadLinksLinkUp();
 
