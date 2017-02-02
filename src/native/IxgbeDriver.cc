@@ -817,4 +817,12 @@ void ebbrt::IxgbeDriver::SetupQueue() {
     ebbrt::kprintf("%d\n", );*/
     ebbrt::kprintf("sizeof(rdesc_advance_rf_t) = %d\n", sizeof(rdesc_advance_rf_t));
     ebbrt::kprintf("sizeof(rdesc_advance_wbf_t) = %d\n", sizeof(rdesc_advance_wbf_t));
+
+    ebbrt::kprintf("sizeof(tdesc_legacy_t) = %d\n", sizeof(tdesc_legacy_t));
+    ebbrt::kprintf("sizeof(tdesc_advance_ctxt_wb_t) = %d\n", sizeof(tdesc_advance_ctxt_wb_t));
+    ebbrt::kprintf("sizeof(tdesc_advance_tx_rf_t) = %d\n", sizeof(tdesc_advance_tx_rf_t));
+    ebbrt::kprintf("sizeof(tdesc_advance_tx_wbf_t) = %d\n", sizeof(tdesc_advance_tx_wbf_t));
+    
+    
+    
 }

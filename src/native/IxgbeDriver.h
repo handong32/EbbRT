@@ -230,6 +230,10 @@ class IxgbeDriver {
     volatile uint32_t kIxgbeStatus;
   };
 
+  /***********************
+   * RX
+   * Descriptors
+   **********************/
   // 7.1.5 Legacy Receive Descriptor, Table 7 - 11
   typedef union {
 
@@ -368,7 +372,172 @@ class IxgbeDriver {
 
     } __attribute__((packed));  // struct
   } rdesc_advance_wbf_t;
-};
+
+  /***********************
+   * TX
+   * Descriptors
+   **********************/
+  // 7.2.3.2.2 Legacy Transmit Descriptor Format
+  typedef union {
+    uint64_t raw[2];
+
+    struct {
+      uint64_t buffer_address;
+
+      union {
+        uint64_t word2_raw;
+
+        struct {
+          uint64_t length : 16;
+          uint64_t cso : 8;
+
+          // cmd
+          uint64_t eop : 1;
+          uint64_t ifcs : 1;
+          uint64_t ic : 1;
+          uint64_t rs : 1;
+          uint64_t rsvd_1 : 1;
+          uint64_t dext : 1;
+          uint64_t vle : 1;
+          uint64_t rsvd_2 : 1;
+
+          // sta
+          uint64_t dd : 1;
+          uint64_t rsvd_3 : 3;
+
+          uint64_t rsvd_4 : 4;
+          uint64_t css : 8;
+          uint64_t vlan : 16;
+        };
+      };
+
+    } __attribute__((packed));
+  } tdesc_legacy_t;
+
+  // 7.2.3.2.3 Advanced Transmit Context Descriptor
+  typedef union {
+    uint64_t raw[2];
+
+    struct {
+      union {
+        uint64_t raw_1;
+
+        struct {
+          uint64_t iplen : 9;
+          uint64_t maclen : 7;
+          uint64_t vlan : 16;
+          uint64_t ipsec_sa_index : 10;
+          uint64_t fcoef : 6;
+          uint64_t rsvd_1 : 16;
+        };
+      };
+
+      union {
+        uint64_t raw_2;
+
+        struct {
+          // tucmd
+          uint64_t ipsec_esp_len : 9;
+          uint64_t snap : 1;
+          uint64_t ipv4 : 1;
+          uint64_t l4t : 2;  // l4 packet type
+          uint64_t ipsec_type : 1;
+          uint64_t encyption : 1;
+          uint64_t fcoe : 1;
+          uint64_t rsvd_2 : 4;
+
+          uint64_t dytp : 4;
+          uint64_t rsvd_3 : 5;
+          uint64_t dext : 1;
+
+          uint64_t bcntlen : 6;
+          uint64_t idx : 1;
+          uint64_t rsvd_4 : 3;
+          uint64_t l4len : 8;
+          uint64_t mss : 16;
+        };
+      };
+
+    } __attribute__((packed));
+
+  } tdesc_advance_ctxt_wb_t;
+
+  // 7.2.3.2.4 Advanced Transmit Data Descriptor  - Read Format
+  typedef union {
+    uint64_t raw[2];
+
+    struct {
+      uint64_t address;
+
+      union {
+        uint64_t raw2;
+        struct {
+          uint64_t dtalen : 16;
+          uint64_t rsvd_1 : 2;
+
+          // mac
+          uint64_t mac_ilsec : 1;
+          uint64_t mac_1588 : 1;
+
+          uint64_t dtyp : 4;
+
+          // dcmd
+          uint64_t eop : 1;
+          uint64_t ifcs : 1;
+          uint64_t rsvd_2 : 1;
+          uint64_t rs : 1;
+          uint64_t rsvd_3 : 1;
+          uint64_t dext : 1;
+          uint64_t vle : 1;
+          uint64_t tse : 1;
+
+          // status
+          uint64_t dd : 1;
+          uint64_t rsvd_4 : 3;
+
+          // idx
+          uint64_t idx : 1;
+          uint64_t rsvd_5 : 2;
+          uint64_t cc : 1;
+
+          // popts
+          uint64_t ixsm : 1;
+          uint64_t txsm : 1;
+          uint64_t ipsec : 1;
+          uint64_t rsvd_6 : 3;
+
+          uint64_t paylen : 18;
+        };
+      };
+    };
+
+  } tdesc_advance_tx_rf_t;
+
+  // Advanced Transmit Data Descriptor  - Write-back Format
+  typedef union {
+    uint64_t raw[2];
+
+    struct {
+      uint64_t rsvd_1;
+
+      union {
+        uint64_t raw2;
+
+        struct {
+          uint64_t rsvd_2 : 32;
+
+          // status
+          uint64_t dd : 1;
+          uint64_t rsvd_3 : 3;
+
+          uint64_t rsvd_4 : 28;
+        };
+      };
+    };
+
+  } tdesc_advance_tx_wbf_t;
+
+};  // class IxgbeDriver
 }  // namespace ebbrt
 
 #endif  // BAREMETAL_SRC_INCLUDE_EBBRT_IXGBE_DRIVER_H_
