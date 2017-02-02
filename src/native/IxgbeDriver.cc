@@ -14,6 +14,7 @@
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
   ixgbe_dev->Init();
+  ixgbe_dev->SetupQueue();
 }
 
 void ebbrt::IxgbeDriver::InitStruct() {
@@ -380,7 +381,7 @@ void ebbrt::IxgbeDriver::PhyInit() {
 // 8.2.3.7.8 Receive Address Low — RAL[n] (0x0A200 + 8*n, n=0...127; RW)
 uint32_t ebbrt::IxgbeDriver::ReadRal(uint32_t n) {
   auto reg = bar0_.Read32(0x0A200 + 8 * n);
-  ebbrt::kprintf("%s %x\n", __FUNCTION__, reg);
+  //ebbrt::kprintf("%s %x\n", __FUNCTION__, reg);
   return reg;
 }
 void ebbrt::IxgbeDriver::WriteRal(uint32_t n, uint32_t m) {
@@ -796,4 +797,24 @@ void ebbrt::IxgbeDriver::Init() {
           i - 64, ~(0x1 << 13));  // Rx data Write Relax Order Enable, bit 13
     }
   }
+}
+
+void ebbrt::IxgbeDriver::SetupQueue() {
+    ebbrt::kprintf("sizeof(rdesc_legacy_t) = %d\n", sizeof(rdesc_legacy_t));
+    //rdesc_legacy_t test;
+    //ebbrt::kprintf("%d\n", test.non_raw_s.buffer_address);
+    //ebbrt::kprintf("%d\n", test.non_raw_s.word2.desc.status.status_bits.dd);
+    
+    /*ebbrt::kprintf("%d\n", );
+    ebbrt::kprintf("%d\n", );
+    ebbrt::kprintf("%d\n", );
+    ebbrt::kprintf("%d\n", );
+    ebbrt::kprintf("%d\n", );
+    ebbrt::kprintf("%d\n", );
+    ebbrt::kprintf("%d\n", );
+    ebbrt::kprintf("%d\n", );
+    ebbrt::kprintf("%d\n", );
+    ebbrt::kprintf("%d\n", );*/
+    ebbrt::kprintf("sizeof(rdesc_advance_rf_t) = %d\n", sizeof(rdesc_advance_rf_t));
+    ebbrt::kprintf("sizeof(rdesc_advance_wbf_t) = %d\n", sizeof(rdesc_advance_wbf_t));
 }
