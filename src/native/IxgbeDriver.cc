@@ -14,7 +14,7 @@
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
   ixgbe_dev->Init();
-  ixgbe_dev->SetupQueue();
+  ixgbe_dev->SetupQueue(0);
 }
 
 void ebbrt::IxgbeDriver::InitStruct() {
@@ -381,7 +381,7 @@ void ebbrt::IxgbeDriver::PhyInit() {
 // 8.2.3.7.8 Receive Address Low — RAL[n] (0x0A200 + 8*n, n=0...127; RW)
 uint32_t ebbrt::IxgbeDriver::ReadRal(uint32_t n) {
   auto reg = bar0_.Read32(0x0A200 + 8 * n);
-  //ebbrt::kprintf("%s %x\n", __FUNCTION__, reg);
+  // ebbrt::kprintf("%s %x\n", __FUNCTION__, reg);
   return reg;
 }
 void ebbrt::IxgbeDriver::WriteRal(uint32_t n, uint32_t m) {
@@ -519,6 +519,48 @@ void ebbrt::IxgbeDriver::WriteSwfwSyncSmBits2(uint32_t m) {
   auto reg = bar0_.Read32(0x10160);
   bar0_.Write32(0x10160, reg & m);
 }
+
+// 8.2.3.8.1 Receive Descriptor Base Address Low — RDBAL[n] (0x01000 + 0x40*n, n=0...63 and 0x0D000 + 0x40*(n-64), n=64...127; RW)
+void ebbrt::IxgbeDriver::WriteRdbal_1(uint32_t n, uint32_t m) {
+    ebbrt::kprintf("%s 0x%X\n", __FUNCTION__, m);
+    bar0_.Write32(0x01000 + 0x40*n, m);
+}
+void ebbrt::IxgbeDriver::WriteRdbal_2(uint32_t n, uint32_t m) {
+    bar0_.Write32(0x0D000 + 0x40*n, m);
+}
+
+// 8.2.3.8.2 Receive Descriptor Base Address High — RDBAH[n] (0x01004 + 0x40*n, n=0...63 and 0x0D004 + 0x40*(n-64), n=64...127; RW)
+void ebbrt::IxgbeDriver::WriteRdbah_1(uint32_t n, uint32_t m) {
+    ebbrt::kprintf("%s 0x%X\n", __FUNCTION__, m);
+    bar0_.Write32(0x01004 + 0x40*n, m);
+}
+void ebbrt::IxgbeDriver::WriteRdbah_2(uint32_t n, uint32_t m) {
+    bar0_.Write32(0x0D004 + 0x40*n, m);
+}
+
+// 8.2.3.8.3 Receive Descriptor Length — RDLEN[n] (0x01008 + 0x40*n, n=0...63 and 0x0D008 + 0x40*(n-64), n=64...127; RW)
+void ebbrt::IxgbeDriver::WriteRdlen_1(uint32_t n, uint32_t m) {
+    ebbrt::kprintf("%s %d\n", __FUNCTION__, m);
+    bar0_.Write32(0x01008 + 0x40*n, m);
+}
+void ebbrt::IxgbeDriver::WriteRdlen_2(uint32_t n, uint32_t m) {
+    bar0_.Write32(0x0D008 + 0x40*n, m);
+}
+
+// 8.2.3.8.7 Split Receive Control Registers — SRRCTL[n] (0x01014 + 0x40*n, n=0...63 and 0x0D014 + 0x40*(n-64), n=64...127 / 0x02100 + 4*n, [n=0...15]; RW)
+void ebbrt::IxgbeDriver::WriteSrrctl_1(uint32_t n, uint32_t m) {
+    auto reg = bar0_.Read32(0x01014 + 0x40*n);
+    bar0_.Write32(0x01014 + 0x40*n, reg | m);
+}
+/*void ebbrt::IxgbeDriver::WriteSrrctl_1_bsizepacket(uint32_t n, uint32_t m) {
+    auto reg = bar0_.Read32(0x01014 + 0x40*n);
+    bar0_.Write32(0x01014 + 0x40*n, reg | m);
+}
+
+void ebbrt::IxgbeDriver::WriteSrrctl_1_desctype(uint32_t n, uint32_t m) {
+    auto reg = bar0_.Read32(0x01014 + 0x40*n);
+    bar0_.Write32(0x01014 + 0x40*n, reg | m);
+    }*/
 
 void ebbrt::IxgbeDriver::SwfwSemRelease() {
   SwsmSwesmbiClear();
@@ -799,30 +841,56 @@ void ebbrt::IxgbeDriver::Init() {
   }
 }
 
-void ebbrt::IxgbeDriver::SetupQueue() {
-    ebbrt::kprintf("sizeof(rdesc_legacy_t) = %d\n", sizeof(rdesc_legacy_t));
-    //rdesc_legacy_t test;
-    //ebbrt::kprintf("%d\n", test.non_raw_s.buffer_address);
-    //ebbrt::kprintf("%d\n", test.non_raw_s.word2.desc.status.status_bits.dd);
-    
-    /*ebbrt::kprintf("%d\n", );
-    ebbrt::kprintf("%d\n", );
-    ebbrt::kprintf("%d\n", );
-    ebbrt::kprintf("%d\n", );
-    ebbrt::kprintf("%d\n", );
-    ebbrt::kprintf("%d\n", );
-    ebbrt::kprintf("%d\n", );
-    ebbrt::kprintf("%d\n", );
-    ebbrt::kprintf("%d\n", );
-    ebbrt::kprintf("%d\n", );*/
-    ebbrt::kprintf("sizeof(rdesc_advance_rf_t) = %d\n", sizeof(rdesc_advance_rf_t));
-    ebbrt::kprintf("sizeof(rdesc_advance_wbf_t) = %d\n", sizeof(rdesc_advance_wbf_t));
+void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
+  ebbrt::kprintf("sizeof(rdesc_legacy_t) = %d\n", sizeof(rdesc_legacy_t));
+  ebbrt::kprintf("sizeof(rdesc_advance_rf_t) = %d\n",
+                 sizeof(rdesc_advance_rf_t));
+  ebbrt::kprintf("sizeof(rdesc_advance_wbf_t) = %d\n",
+                 sizeof(rdesc_advance_wbf_t));
+  ebbrt::kprintf("sizeof(tdesc_legacy_t) = %d\n", sizeof(tdesc_legacy_t));
+  ebbrt::kprintf("sizeof(tdesc_advance_ctxt_wb_t) = %d\n",
+                 sizeof(tdesc_advance_ctxt_wb_t));
+  ebbrt::kprintf("sizeof(tdesc_advance_tx_rf_t) = %d\n",
+                 sizeof(tdesc_advance_tx_rf_t));
+  ebbrt::kprintf("sizeof(tdesc_advance_tx_wbf_t) = %d\n",
+                 sizeof(tdesc_advance_tx_wbf_t));
 
-    ebbrt::kprintf("sizeof(tdesc_legacy_t) = %d\n", sizeof(tdesc_legacy_t));
-    ebbrt::kprintf("sizeof(tdesc_advance_ctxt_wb_t) = %d\n", sizeof(tdesc_advance_ctxt_wb_t));
-    ebbrt::kprintf("sizeof(tdesc_advance_tx_rf_t) = %d\n", sizeof(tdesc_advance_tx_rf_t));
-    ebbrt::kprintf("sizeof(tdesc_advance_tx_wbf_t) = %d\n", sizeof(tdesc_advance_tx_wbf_t));
-    
-    
-    
+  // allocate memory for descriptor rings
+  ixgq_ = (e10k_queue_t*)malloc(sizeof(e10k_queue_t));
+  ixgq_->tx_ring = (tdesc_advance_tx_wbf_t*)malloc(
+      sizeof(tdesc_advance_tx_wbf_t) * NTXDESCS);
+  ixgq_->rx_ring =
+      (rdesc_advance_wbf_t*)malloc(sizeof(rdesc_advance_wbf_t) * NRXDESCS);
+
+  ixgq_->tx_opaque = (void**)calloc(NTXDESCS, sizeof(void*));
+  ixgq_->tx_isctx = (bool*)calloc(NTXDESCS, sizeof(bool));
+
+  ixgq_->tx_head = 0;
+  ixgq_->tx_tail = ixgq_->tx_lasttail = 0;
+  ixgq_->tx_size = NTXDESCS;
+
+  ixgq_->rx_context = (struct e10k_queue_rxctx*)calloc(
+      NRXDESCS, sizeof(struct e10k_queue_rxctx));
+  ixgq_->rx_head = 0;
+  ixgq_->rx_tail = 0;
+  ixgq_->rx_size = NRXDESCS;
+
+  memset(ixgq_->tx_ring, 0, sizeof(tdesc_advance_tx_wbf_t) * NTXDESCS);
+  memset(ixgq_->rx_ring, 0, sizeof(rdesc_advance_wbf_t) * NRXDESCS);
+
+  // Initialize RX queue in HW
+  ebbrt::kprintf("tx_ring: %p, rx_ring: %p\n", ixgq_->tx_ring, ixgq_->rx_ring);
+  
+  uint64_t rxaddr = reinterpret_cast<uint64_t>(ixgq_->rx_ring);
+  uint32_t rxaddrl = rxaddr & 0xFFFFFFFF;
+  uint32_t rxaddrh = (rxaddr >> 32) & 0xFFFFFFFF;
+  ebbrt::kprintf("rxaddr: 0x%08X rxaddrl: 0x%X rxaddrh: 0x%X\n", rxaddr, rxaddrl, rxaddrh);
+
+  WriteRdbal_1(i, rxaddrl);
+  WriteRdbah_1(i, rxaddrh);
+  WriteRdlen_1(i, sizeof(rdesc_advance_wbf_t) * NRXDESCS);  
+
+  WriteSrrctl_1(i, RXBUFSZ/1024); //bsizepacket
+  WriteSrrctl_1(i, RXBUFSZ/1024); //bsizepacket
+  
 }

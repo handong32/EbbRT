@@ -31,103 +31,15 @@ class IxgbeDriver {
  protected:
   static const constexpr uint16_t kIxgbeVendorId = 0x8086;
   static const constexpr uint16_t kIxgbeDeviceId = 0x10FB;
-
+  static const constexpr uint32_t NTXDESCS = 256;
+  static const constexpr uint32_t NRXDESCS = 256;
+  static const constexpr uint32_t RXBUFSZ = 2048;
+  
   explicit IxgbeDriver(pci::Device& dev) : dev_(dev), bar0_(dev.GetBar(0)) {
     dev_.SetBusMaster(true);
     ebbrt::kprintf("%s constructor\n", __FUNCTION__);
   }
-
-  // 7.1.5 Legacy Receive Descriptor
-
-  /*
-    // 7.1.5 Legacy Receive Descriptor
-  typedef struct {
-    uint64_t buffer;
-    uint16_t length;
-    uint16_t checksum;
-
-    // Status Field
-    union {
-      struct {
-        uint8_t dd : 1;  // Descriptor DOne
-        uint8_t eop : 1;  // End of Packet
-        uint8_t rsrvd : 1;
-        uint8_t vp : 1;  // Vlan Packet
-        uint8_t udpcs : 1;  // Udp Checksum
-        uint8_t l4cs : 1;  // L4 checksum
-        uint8_t ipcs : 1;  // Ipv4 checksum
-        uint8_t pif : 1;  // non unicast address
-      } status_bits;
-      uint8_t status;
-    };
-
-    // Receive Errors
-    union {
-      struct {
-        uint8_t rxe : 1;  // mac error
-        uint8_t rsrvd : 5;
-        uint8_t tcpe : 1;  // tcp/udp checksum error
-        uint8_t ipe : 1;  // ipv4 checksum
-      } recv_bits;
-      uint8_t recv;
-    };
-
-    uint16_t vlan_tag;
-  } rdesc_legacy_t;
-
-  // 7.1.6.2 Advanced Receive Descriptors — Write-Back Format
-  typedef struct {
-
-    union {
-      struct {
-        uint8_t rss_type : 4;
-
-        // packet type
-        uint8_t pt_ipv4 : 1;
-        uint8_t pt_ipv4e : 1;
-        uint8_t pt_ipv6 : 1;
-        uint8_t pt_ipv6e : 1;
-        uint8_t pt_tcp : 1;
-        uint8_t pt_udp : 1;
-        uint8_t pt_sctp : 1;
-        uint8_t pt_nfs : 1;
-        uint8_t pt_isesp : 1;
-        uint8_t pt_isah : 1;
-        uint8_t pt_linksec : 1;
-        uint8_t pt_l2packet : 1;
-        uint8_t pt_rsvd : 1;
-
-        uint8_t rsccnt : 4;
-        uint16_t header_len : 10;
-        uint8_t sph : 1;
-      } p_bits;
-      uint32_t packed1;
-    };
-
-    uint32_t param;  // RSS Hash or FCOE_PARAM or Flow Director Filters ID
-    // (32-bit offset 32, 1st line) Fragment Checksum (16-bit
-    // offset 48, 1st line)
-
-    union {
-      struct {
-          // extended status, nextp
-          uint8_t dd : 1;
-          uint8_t eop : 1;
-          uint8_t flm : 1;
-          uint8_t vp : 1;
-
-          union {
-              struct {
-                  uint8_t udpcs : 1;
-                  uint8_t l4i : 1;
-              } fcoe_bits;
-          };
-
-      };
-      uint32_t extended;
-    };
-  } rdesc_advance_wbf_t;
-  */
+ 
  private:
   void InitStruct();
   void DeviceInfo();
@@ -135,7 +47,7 @@ class IxgbeDriver {
   void PhyInit();
   void StopDevice();
   void GlobalReset();
-  void SetupQueue();
+  void SetupQueue(uint32_t i);
 
   bool SwsmSmbiRead();
   void SwsmSmbiClear();
@@ -201,6 +113,19 @@ class IxgbeDriver {
   void WriteDcaTxctrlTxdescWbro(uint32_t n, uint32_t m);
   void WriteDcaRxctrl_1(uint32_t n, uint32_t m);
   void WriteDcaRxctrl_2(uint32_t n, uint32_t m);
+
+  void WriteRdbal_1(uint32_t n, uint32_t m);
+  void WriteRdbal_2(uint32_t n, uint32_t m);
+  
+  void WriteRdbah_1(uint32_t n, uint32_t m);
+  void WriteRdbah_2(uint32_t n, uint32_t m);
+  
+  void WriteRdlen_1(uint32_t n, uint32_t m);
+  void WriteRdlen_2(uint32_t n, uint32_t m);
+  
+  void WriteSrrctl_1(uint32_t n, uint32_t m);
+  //void WriteSrrctl_1_bsizepacket(uint32_t n, uint32_t m);
+  //void WriteSrrctl_1_desctype(uint32_t n, uint32_t m);
 
   void ReadEicr();
   bool ReadStatusPcieMes();
@@ -536,6 +461,39 @@ class IxgbeDriver {
     };
 
   } tdesc_advance_tx_wbf_t;
+
+  /**
+   * Context structure for RX descriptors. This is needed to implement RSC, since
+   * we need to be able to chain buffers together. */
+  struct e10k_queue_rxctx {
+      void                    *opaque;
+      struct e10k_queue_rxctx *previous;
+      bool                    used;
+  };
+
+  // Queue
+  typedef struct {
+      tdesc_advance_tx_wbf_t * tx_ring;
+      void ** tx_opaque;
+      bool* tx_isctx;
+      size_t tx_head;
+      size_t tx_tail;
+      size_t tx_lasttail;
+      size_t tx_size;
+      //uint32_t* tx_hwb;
+
+      rdesc_advance_wbf_t* rx_ring;
+      struct e10k_queue_rxctx*        rx_context;
+      size_t                          rx_head;
+      size_t                          rx_tail;
+      size_t                          rx_size;
+      
+      //struct e10k_queue_ops           ops;
+      //void*                           opaque;
+      
+  } e10k_queue_t;
+  
+  e10k_queue_t *ixgq_;
 
 };  // class IxgbeDriver
 }  // namespace ebbrt
