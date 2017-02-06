@@ -67,9 +67,14 @@ class IxgbeDriver {
 
   void WriteRxctrl(uint32_t m);
   void WriteDmatxctl(uint32_t m);
+  void WriteDmatxctl_te(uint32_t m);
+
   void WriteEimc(uint32_t m);
   void WriteTxdctl(uint32_t n, uint32_t m);
+
   void WriteRxdctl_1(uint32_t n, uint32_t m);
+  void WriteRxdctl_1_enable(uint32_t n, uint32_t m);
+
   void WriteRxdctl_2(uint32_t n, uint32_t m);
   void WriteCtrl(uint32_t m);
   void WriteFcttv(uint32_t n, uint32_t m);
@@ -125,8 +130,26 @@ class IxgbeDriver {
   
   void WriteSrrctl_1(uint32_t n, uint32_t m);
   //void WriteSrrctl_1_bsizepacket(uint32_t n, uint32_t m);
-  //void WriteSrrctl_1_desctype(uint32_t n, uint32_t m);
+  void WriteSrrctl_1_desctype(uint32_t n, uint32_t m);
 
+  void WriteRdt_1(uint32_t n, uint32_t m);
+  void WriteRdh_1(uint32_t n, uint32_t m);
+  void WriteRdt_2(uint32_t n, uint32_t m);
+
+  void WriteIvarAlloc0(uint32_t n, uint32_t m);
+  void WriteIvarAllocval0(uint32_t n, uint32_t m);
+  void WriteIvarAlloc1(uint32_t n, uint32_t m);
+  void WriteIvarAllocval1(uint32_t n, uint32_t m);
+
+  void WriteSecrxctrl_Rx_Dis(uint32_t m);
+  
+  void WriteTdbal(uint32_t n, uint32_t m);
+  void WriteTdbah(uint32_t n, uint32_t m);
+  void WriteTdlen(uint32_t n, uint32_t m);
+  
+  void WriteTdh(uint32_t n, uint32_t m);
+  void WriteTdt(uint32_t n, uint32_t m);
+  
   void ReadEicr();
   bool ReadStatusPcieMes();
   uint8_t ReadStatusLanId();
@@ -142,8 +165,16 @@ class IxgbeDriver {
   uint32_t ReadRal(uint32_t n);
   uint16_t ReadRah(uint32_t n);
   uint8_t ReadRahAv(uint32_t n);
+  
+  uint8_t ReadRxdctl_1_enable(uint32_t n);
+  uint8_t ReadSecrxstat_Sr_Rdy();
+  
+  uint8_t ReadTxdctl_enable(uint32_t n);
+  
+  // statistics
   uint32_t ReadTpr();
-
+  uint32_t ReadGprc();
+  
   bool ReadLinksLinkUp();
 
   pci::Device& dev_;
