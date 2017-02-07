@@ -11,17 +11,34 @@
 #include "EventManager.h"
 #include "Ixgbe.h"
 
+#include <atomic>
+
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
   ixgbe_dev->Init();
   ixgbe_dev->SetupQueue(0);
-  //ebbrt::clock::SleepMilli(200);
-  //ebbrt::kprintf("intel 82599 card initialzed\n");
+  ebbrt::clock::SleepMilli(200);
+  ebbrt::kprintf("intel 82599 card initialzed\n");
 
-  while(1) {
-      ebbrt::clock::SleepMilli(1000);
-      ebbrt::kprintf("Slept 1s: ");
-      ixgbe_dev->ReadGprc();
+  /*while (1) {
+    ebbrt::clock::SleepMilli(10000);
+    ebbrt::kprintf("Slept 10s: ");
+    ixgbe_dev->ReadGprc();
+    ixgbe_dev->ProcessPacket(0);
+  }*/
+}
+
+void ebbrt::IxgbeDriver::ProcessPacket(uint32_t n) {
+  rdesc_legacy_t tmp;
+  tmp = ixgq->rx_ring[ixgq->rx_head];
+  
+  std::atomic_thread_fence(std::memory_order_release);
+  if (tmp.dd && tmp.eop) {
+      auto t = reinterpret_cast<uintptr_t>(tmp.buffer_address);
+      auto t2 = reinterpret_cast<uint64_t>(&t);
+      ebbrt::kprintf("Packet recv complete, %p\n", t2);
+    
+    ixgq->rx_head = (ixgq->rx_head + 1) % ixgq->rx_size;
   }
 }
 
@@ -135,8 +152,8 @@ void ebbrt::IxgbeDriver::WriteDmatxctl(uint32_t m) {
   bar0_.Write32(0x04A80, reg & m);
 }
 void ebbrt::IxgbeDriver::WriteDmatxctl_te(uint32_t m) {
-    auto reg = bar0_.Read32(0x04A80);
-    bar0_.Write32(0x04A80, reg | m);
+  auto reg = bar0_.Read32(0x04A80);
+  bar0_.Write32(0x04A80, reg | m);
 }
 
 // 8.2.3.5.18 - General Purpose Interrupt Enable — GPIE (0x00898; RW)
@@ -182,8 +199,8 @@ void ebbrt::IxgbeDriver::WriteTxdctl(uint32_t n, uint32_t m) {
   bar0_.Write32(0x06028 + (0x40 * n), m);
 }
 uint8_t ebbrt::IxgbeDriver::ReadTxdctl_enable(uint32_t n) {
-    auto reg = bar0_.Read32(0x06028+0x40*n);
-    return (reg >> 25) & 0x1;
+  auto reg = bar0_.Read32(0x06028 + 0x40 * n);
+  return (reg >> 25) & 0x1;
 }
 
 // 8.2.3.8.6 Receive Descriptor Control — RXDCTL[n] (0x01028 +
@@ -566,29 +583,32 @@ void ebbrt::IxgbeDriver::WriteRdbah_2(uint32_t n, uint32_t m) {
   bar0_.Write32(0x0D004 + 0x40 * n, m);
 }
 
-// 8.2.3.9.5 Transmit Descriptor Base Address Low — TDBAL[n] (0x06000+0x40*n, n=0...127; RW)
+// 8.2.3.9.5 Transmit Descriptor Base Address Low — TDBAL[n] (0x06000+0x40*n,
+// n=0...127; RW)
 void ebbrt::IxgbeDriver::WriteTdbal(uint32_t n, uint32_t m) {
-    bar0_.Write32(0x06000+0x40*n, m);
+  bar0_.Write32(0x06000 + 0x40 * n, m);
 }
 
-// 8.2.3.9.6 Transmit Descriptor Base Address High — TDBAH[n] (0x06004+0x40*n, n=0...127; RW)
+// 8.2.3.9.6 Transmit Descriptor Base Address High — TDBAH[n] (0x06004+0x40*n,
+// n=0...127; RW)
 void ebbrt::IxgbeDriver::WriteTdbah(uint32_t n, uint32_t m) {
-    bar0_.Write32(0x06004+0x40*n, m);
+  bar0_.Write32(0x06004 + 0x40 * n, m);
 }
 
-// 8.2.3.9.7 Transmit Descriptor Length — TDLEN[n] (0x06008+0x40*n, n=0...127; RW)
+// 8.2.3.9.7 Transmit Descriptor Length — TDLEN[n] (0x06008+0x40*n, n=0...127;
+// RW)
 void ebbrt::IxgbeDriver::WriteTdlen(uint32_t n, uint32_t m) {
-    bar0_.Write32(0x06008+0x40*n, m);
+  bar0_.Write32(0x06008 + 0x40 * n, m);
 }
 
 // 8.2.3.9.8 Transmit Descriptor Head — TDH[n] (0x06010+0x40*n, n=0...127; RO)
 void ebbrt::IxgbeDriver::WriteTdh(uint32_t n, uint32_t m) {
-    bar0_.Write32(0x06010+0x40*n, m);
+  bar0_.Write32(0x06010 + 0x40 * n, m);
 }
 
 // 8.2.3.9.9 Transmit Descriptor Tail — TDT[n] (0x06018+0x40*n, n=0...127; RW)
 void ebbrt::IxgbeDriver::WriteTdt(uint32_t n, uint32_t m) {
-    bar0_.Write32(0x06018+0x40*n, m);
+  bar0_.Write32(0x06018 + 0x40 * n, m);
 }
 
 // 8.2.3.8.3 Receive Descriptor Length — RDLEN[n] (0x01008 + 0x40*n, n=0...63
@@ -627,69 +647,67 @@ void ebbrt::IxgbeDriver::WriteRdt_2(uint32_t n, uint32_t m) {
   bar0_.Write32(0x0D018 + 0x40 * n, m);
 }
 
-void ebbrt::IxgbeDriver::SwfwSemRelease() {
-  SwsmSwesmbiClear();
-  SwsmSmbiClear();
-  ebbrt::kprintf("%s\n", __FUNCTION__);
-}
-
 // 8.2.3.8.4 Receive Descriptor Head — RDH[n] (0x01010 + 0x40*n, n=0...63 and
 // 0x0D010 + 0x40*(n-64), n=64...127; RO)
 void ebbrt::IxgbeDriver::WriteRdh_1(uint32_t n, uint32_t m) {
   bar0_.Write32(0x01010 + 0x40 * n, m);
 }
 
-// 8.2.3.5.16 Interrupt Vector Allocation Registers — IVAR[n] (0x00900 + 4*n, n=0...63; RW)
-void ebbrt::IxgbeDriver::WriteIvarAlloc0(uint32_t n, uint32_t m) {
-    auto reg = bar0_.Read32(0x00900 + 4*n);
-    reg = reg & ~(0x3F);
-    bar0_.Write32(0x00900 + 4*n, reg | m);
+void ebbrt::IxgbeDriver::SwfwSemRelease() {
+  SwsmSwesmbiClear();
+  SwsmSmbiClear();
+  ebbrt::kprintf("%s\n", __FUNCTION__);
+}
 
+// 8.2.3.5.16 Interrupt Vector Allocation Registers — IVAR[n] (0x00900 + 4*n,
+// n=0...63; RW)
+void ebbrt::IxgbeDriver::WriteIvarAlloc0(uint32_t n, uint32_t m) {
+  auto reg = bar0_.Read32(0x00900 + 4 * n);
+  reg = reg & ~(0x3F);
+  bar0_.Write32(0x00900 + 4 * n, reg | m);
 }
 void ebbrt::IxgbeDriver::WriteIvarAllocval0(uint32_t n, uint32_t m) {
-    auto reg = bar0_.Read32(0x00900 + 4*n);
-    bar0_.Write32(0x00900 + 4*n, reg | m);
+  auto reg = bar0_.Read32(0x00900 + 4 * n);
+  bar0_.Write32(0x00900 + 4 * n, reg | m);
 }
 void ebbrt::IxgbeDriver::WriteIvarAlloc1(uint32_t n, uint32_t m) {
-    auto reg = bar0_.Read32(0x00900 + 4*n);
-    reg = reg & ~(0x3F << 8);
-    bar0_.Write32(0x00900 + 4*n, reg | m);
+  auto reg = bar0_.Read32(0x00900 + 4 * n);
+  reg = reg & ~(0x3F << 8);
+  bar0_.Write32(0x00900 + 4 * n, reg | m);
 }
 void ebbrt::IxgbeDriver::WriteIvarAllocval1(uint32_t n, uint32_t m) {
-    auto reg = bar0_.Read32(0x00900 + 4*n);
-    bar0_.Write32(0x00900 + 4*n, reg | m);
+  auto reg = bar0_.Read32(0x00900 + 4 * n);
+  bar0_.Write32(0x00900 + 4 * n, reg | m);
 }
 
 // 8.2.3.12.5 Security Rx Control — SECRXCTRL (0x08D00; RW)
 void ebbrt::IxgbeDriver::WriteSecrxctrl_Rx_Dis(uint32_t m) {
-    auto reg = bar0_.Read32(0x08D00);
-    if(m) {
-	bar0_.Write32(0x08D00, reg | m);
-    }
-    else
-    {
-	bar0_.Write32(0x08D00, reg & ~(0x1 << 1));
-    }
+  auto reg = bar0_.Read32(0x08D00);
+  if (m) {
+    bar0_.Write32(0x08D00, reg | m);
+  } else {
+    bar0_.Write32(0x08D00, reg & ~(0x1 << 1));
+  }
 }
 
 // 8.2.3.12.6 Security Rx Status — SECRXSTAT (0x08D04; RO)
 uint8_t ebbrt::IxgbeDriver::ReadSecrxstat_Sr_Rdy() {
-    auto reg = bar0_.Read32(0x08D04);
-    return reg & 0x1;
+  auto reg = bar0_.Read32(0x08D04);
+  return reg & 0x1;
 }
 
 // 8.2.3.23.59 Total Packets Received — TPR (0x040D0; RC)
 uint32_t ebbrt::IxgbeDriver::ReadTpr() {
-    auto reg = bar0_.Read32(0x040D0);
-    ebbrt::kprintf("%s %d\n", __FUNCTION__, reg);
-    return reg;
+  auto reg = bar0_.Read32(0x040D0);
+  ebbrt::kprintf("%s %d\n", __FUNCTION__, reg);
+  return reg;
 }
 
 // 8.2.3.23.26 Good Packets Received Count — GPRC (0x04074; RO)
 uint32_t ebbrt::IxgbeDriver::ReadGprc() {
-    auto reg = bar0_.Read32(0x04074);
-    ebbrt::kprintf("%s %d\n", __FUNCTION__, reg);
-    return reg;
+  auto reg = bar0_.Read32(0x04074);
+  ebbrt::kprintf("%s %d\n", __FUNCTION__, reg);
+  return reg;
 }
 
 bool ebbrt::IxgbeDriver::SwfwSemAcquire() {
@@ -874,10 +892,12 @@ void ebbrt::IxgbeDriver::Init() {
   // Initialize interrupts
   WriteEicr(0xFFFFFFFF);
 
+  // TODO: use interrupt
   // using interrupts I believe
-  WriteGpie(0x1 << 6);  // EIMEN bit 6
-  WriteEimc(ReadEims());
-  WriteEims(0x7FFFFFFF);
+  // WriteGpie(0x1 << 6);  // EIMEN bit 6
+  // WriteEimc(ReadEims());
+  // WriteEims(0x7FFFFFFF);
+
   // ebbrt::kprintf("EIMS: %p\n", ReadEims());
 
   /* FreeBSD:
@@ -980,71 +1000,119 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
                  sizeof(tdesc_advance_tx_wbf_t));
 
   // allocate memory for descriptor rings
-  ixgq_ = (e10k_queue_t*)malloc(sizeof(e10k_queue_t));
-  ixgq_->tx_ring = (tdesc_advance_tx_wbf_t*)malloc(
-      sizeof(tdesc_advance_tx_wbf_t) * NTXDESCS);
-  ixgq_->rx_ring =
-      (rdesc_advance_wbf_t*)malloc(sizeof(rdesc_advance_wbf_t) * NRXDESCS);
+  ixgq = (e10k_queue_t*)malloc(sizeof(e10k_queue_t));
 
-  ixgq_->tx_opaque = (void**)calloc(NTXDESCS, sizeof(void*));
+  // TX
+  // ixgq_->tx_ring = (tdesc_advance_tx_wbf_t*)malloc(
+  //    sizeof(tdesc_advance_tx_wbf_t) * NTXDESCS);
+
+  /*ixgq_->tx_opaque = (void**)calloc(NTXDESCS, sizeof(void*));
   ixgq_->tx_isctx = (bool*)calloc(NTXDESCS, sizeof(bool));
 
   ixgq_->tx_head = 0;
   ixgq_->tx_tail = ixgq_->tx_lasttail = 0;
-  ixgq_->tx_size = NTXDESCS;
+  ixgq_->tx_size = NTXDESCS;*/
 
-  ixgq_->rx_context = (struct e10k_queue_rxctx*)calloc(
-      NRXDESCS, sizeof(struct e10k_queue_rxctx));
-  ixgq_->rx_head = 0;
-  ixgq_->rx_tail = 0;
-  ixgq_->rx_size = NRXDESCS;
+  // RX - allocate a ring of 256 receive legacy descriptors
+  auto rx_size = sizeof(rdesc_legacy_t) * NRXDESCS;
+  ixgq->rx_ring = (rdesc_legacy_t*)malloc(rx_size);
+  // ixgq_->rx_context = (struct e10k_queue_rxctx*)calloc(
+  //    NRXDESCS, sizeof(struct e10k_queue_rxctx));
 
-  memset(ixgq_->tx_ring, 0, sizeof(tdesc_advance_tx_wbf_t) * NTXDESCS);
-  memset(ixgq_->rx_ring, 0, sizeof(rdesc_advance_wbf_t) * NRXDESCS);
+  // head and tail point to same descriptor
+  ixgq->rx_head = 0;
+  ixgq->rx_tail = 0;
+  ixgq->rx_size = NRXDESCS;
+
+  // memset(ixgq_->tx_ring, 0, sizeof(tdesc_advance_tx_wbf_t) * NTXDESCS);
+  memset(ixgq->rx_ring, 0, rx_size);
 
   // Initialize RX queue in HW
-  ebbrt::kprintf("tx_ring: %p, rx_ring: %p\n", ixgq_->tx_ring, ixgq_->rx_ring);
+  // ebbrt::kprintf("tx_ring: %p, rx_ring: %p\n", ixgq_->tx_ring,
+  // ixgq_->rx_ring);
+  ebbrt::kprintf("rx_ring addr: %p\n", ixgq->rx_ring);
 
-  uint64_t rxaddr = reinterpret_cast<uint64_t>(ixgq_->rx_ring);
+  uint64_t rxaddr = reinterpret_cast<uint64_t>(ixgq->rx_ring);
   uint32_t rxaddrl = rxaddr & 0xFFFFFFFF;
   uint32_t rxaddrh = (rxaddr >> 32) & 0xFFFFFFFF;
-  ebbrt::kprintf("rxaddr: 0x%08X rxaddrl: 0x%X rxaddrh: 0x%X\n", rxaddr,
-                 rxaddrl, rxaddrh);
+  ebbrt::kprintf("rxaddr: %p rxaddrl: 0x%X rxaddrh: 0x%X\n", rxaddr, rxaddrl,
+                 rxaddrh);
 
+  // rxaddrl must be 128 byte aligned, lower 7 bits == 0
+  assert((rxaddrl & 0x7F) == 0);
+
+  // update register RDBAL, RDBAH with receive descriptor base address
   WriteRdbal_1(i, rxaddrl);
   WriteRdbah_1(i, rxaddrh);
-  WriteRdlen_1(i, sizeof(rdesc_advance_wbf_t) * NRXDESCS);
 
-  WriteSrrctl_1(i, RXBUFSZ / 1024);  // bsizepacket
+  // length must also be 128 byte aligned
+  assert((rx_size & 0x7F) == 0);
+  // set to number of bytes allocated for receive descriptor ring
+  WriteRdlen_1(i, rx_size);
+
+  // program srrctl register
+  WriteSrrctl_1(i, RXBUFSZ / 1024);  // bsizepacket = 2 KB
   WriteSrrctl_1_desctype(i, ~(0x7 << 25));  // desctype legacy
 
+  // TODO: enable rssctl
+
+  // Set Enable bit in receive queue
   WriteRxdctl_1_enable(i, 0x1 << 25);
-  while (ReadRxdctl_1_enable(i) == 0); // TODO: Timeout
-  
+  while (ReadRxdctl_1_enable(i) == 0)  // till set
+    ;  // TODO: Timeout
+
+  // Set head and tail pointers
+  WriteRdt_1(i, 0x0);
+  WriteRdh_1(i, 0x0);
+
   ebbrt::kprintf("RX queue enabled\n");
 
-  //setup interrupts for this queue
-  auto ii = i / 2;
-  //if((i % 2) == 0) {
-  WriteIvarAlloc0(i, ii);
+  // setup RX interrupts for queue 0
+  // auto ii = i / 2;
+  // if((i % 2) == 0) {
+  WriteIvarAlloc0(i, 0);
   WriteIvarAllocval0(i, 0x1 << 7);
-  WriteIvarAlloc1(i, ii << 8);
-  WriteIvarAllocval1(i, 0x1 << 15);
+  // WriteIvarAlloc1(i, 0 << 8);
+  // WriteIvarAllocval1(i, 0x1 << 15);
   //}
 
   // Enable RX
-  WriteSecrxctrl_Rx_Dis(0x1 << 1); //disable RX_DIS
-  while(ReadSecrxstat_Sr_Rdy() == 0); //TODO Timeout
+  WriteSecrxctrl_Rx_Dis(0x1 << 1);  // disable RX_DIS
+  while (ReadSecrxstat_Sr_Rdy() == 0)
+    ;  // TODO Timeout
   WriteRxctrl(0x1);
-  WriteSecrxctrl_Rx_Dis(0x0 << 1); //enable RX_DIS
+  WriteSecrxctrl_Rx_Dis(0x0 << 1);  // enable RX_DIS
 
   ebbrt::kprintf("RX enabled\n");
 
-  // Add RX Buffers
-  // TODO
+  // Add RX Buffers to ring
+  rxbuf = (void*)malloc(RXBUFSZ * (NRXDESCS - 1));
+  assert(rxbuf != NULL);
+  ebbrt::kprintf("Allocated RX buffer: %p\n\n", rxbuf);
+
+  // add buffer to each descriptor
+  for (auto i = 0; i < 256 - 1; i++) {
+    auto rxphys = (uint64_t)rxbuf + (i * RXBUFSZ);
+    auto tail = ixgq->rx_tail;
+    ixgq->rx_ring[tail].buffer_address =
+        (uint64_t)rxphys;  // update buffer address for descriptor
+    // ebbrt::kprintf("Descriptor #%d: %p %p\n", tail, rxphys,
+    // ixgq->rx_ring[tail].buffer_address);
+
+    ixgq->rx_tail = (tail + 1) % ixgq->rx_size;
+
+    // TODO: check if queue is full
+  }
+
+  // bump tail pts via register rdt to enable descriptor fetching by setting to
+  // length of ring minus one
+  ebbrt::kprintf("bumping tail: %d\n", ixgq->rx_tail);
+  WriteRdt_1(i, ixgq->rx_tail);
+
+  ebbrt::kprintf("RX Queue setup complete\n");
 
   // Initialize TX queue in HW
-  uint64_t txaddr = reinterpret_cast<uint64_t>(ixgq_->tx_ring);
+  /*uint64_t txaddr = reinterpret_cast<uint64_t>(ixgq_->tx_ring);
   uint32_t txaddrl = txaddr & 0xFFFFFFFF;
   uint32_t txaddrh = (txaddr >> 32) & 0xFFFFFFFF;
   ebbrt::kprintf("txaddr: 0x%08X txaddrl: 0x%X txaddrh: 0x%X\n", txaddr,
@@ -1056,14 +1124,14 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
 
   WriteTdh(i, 0x0);
   WriteTdt(i, 0x0);
-  
+
   WriteDmatxctl_te(0x1);
 
   WriteTxdctl(i, 0x1 << 25); //transmit queue enable
   while(ReadTxdctl_enable(i) == 0);
-  
-  ebbrt::kprintf("TX queue enabled\n");
-  
+
+  ebbrt::kprintf("TX queue enabled\n");*/
+
   // TODO: set up dca txctrl 
   
 }

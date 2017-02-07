@@ -31,15 +31,26 @@ class IxgbeDriver {
  protected:
   static const constexpr uint16_t kIxgbeVendorId = 0x8086;
   static const constexpr uint16_t kIxgbeDeviceId = 0x10FB;
+
+  /* FreeBSD:
+   * RxDescriptors Valid Range: 64-4096 Default Value: 256 This value is the
+   * number of receive descriptors allocated for each RX queue. Increasing this
+   * value allows the driver to buffer more incoming packets. Each descriptor
+   * is 16 bytes.  A receive buffer is also allocated for each descriptor.
+   *
+   * Note: with 8 rings and a dual port card, it is possible to bump up
+   *	against the system mbuf pool limit, you can tune nmbclusters
+   *	to adjust for this.
+   */
   static const constexpr uint32_t NTXDESCS = 256;
   static const constexpr uint32_t NRXDESCS = 256;
   static const constexpr uint32_t RXBUFSZ = 2048;
-  
+
   explicit IxgbeDriver(pci::Device& dev) : dev_(dev), bar0_(dev.GetBar(0)) {
     dev_.SetBusMaster(true);
     ebbrt::kprintf("%s constructor\n", __FUNCTION__);
   }
- 
+
  private:
   void InitStruct();
   void DeviceInfo();
@@ -121,15 +132,15 @@ class IxgbeDriver {
 
   void WriteRdbal_1(uint32_t n, uint32_t m);
   void WriteRdbal_2(uint32_t n, uint32_t m);
-  
+
   void WriteRdbah_1(uint32_t n, uint32_t m);
   void WriteRdbah_2(uint32_t n, uint32_t m);
-  
+
   void WriteRdlen_1(uint32_t n, uint32_t m);
   void WriteRdlen_2(uint32_t n, uint32_t m);
-  
+
   void WriteSrrctl_1(uint32_t n, uint32_t m);
-  //void WriteSrrctl_1_bsizepacket(uint32_t n, uint32_t m);
+  // void WriteSrrctl_1_bsizepacket(uint32_t n, uint32_t m);
   void WriteSrrctl_1_desctype(uint32_t n, uint32_t m);
 
   void WriteRdt_1(uint32_t n, uint32_t m);
@@ -142,14 +153,14 @@ class IxgbeDriver {
   void WriteIvarAllocval1(uint32_t n, uint32_t m);
 
   void WriteSecrxctrl_Rx_Dis(uint32_t m);
-  
+
   void WriteTdbal(uint32_t n, uint32_t m);
   void WriteTdbah(uint32_t n, uint32_t m);
   void WriteTdlen(uint32_t n, uint32_t m);
-  
+
   void WriteTdh(uint32_t n, uint32_t m);
   void WriteTdt(uint32_t n, uint32_t m);
-  
+
   void ReadEicr();
   bool ReadStatusPcieMes();
   uint8_t ReadStatusLanId();
@@ -165,18 +176,21 @@ class IxgbeDriver {
   uint32_t ReadRal(uint32_t n);
   uint16_t ReadRah(uint32_t n);
   uint8_t ReadRahAv(uint32_t n);
-  
+
   uint8_t ReadRxdctl_1_enable(uint32_t n);
   uint8_t ReadSecrxstat_Sr_Rdy();
-  
+
   uint8_t ReadTxdctl_enable(uint32_t n);
-  
+
   // statistics
   uint32_t ReadTpr();
   uint32_t ReadGprc();
-  
+
   bool ReadLinksLinkUp();
 
+  // Process
+  void ProcessPacket(uint32_t n);
+  
   pci::Device& dev_;
   pci::Bar& bar0_;
 
@@ -494,37 +508,48 @@ class IxgbeDriver {
   } tdesc_advance_tx_wbf_t;
 
   /**
-   * Context structure for RX descriptors. This is needed to implement RSC, since
+   * Context structure for RX descriptors. This is needed to implement RSC,
+   * since
    * we need to be able to chain buffers together. */
-  struct e10k_queue_rxctx {
-      void                    *opaque;
-      struct e10k_queue_rxctx *previous;
-      bool                    used;
+  /*struct e10k_queue_rxctx {
+    void* opaque;
+    struct e10k_queue_rxctx* previous;
+    bool used;
   };
 
   // Queue
   typedef struct {
-      tdesc_advance_tx_wbf_t * tx_ring;
-      void ** tx_opaque;
-      bool* tx_isctx;
-      size_t tx_head;
-      size_t tx_tail;
-      size_t tx_lasttail;
-      size_t tx_size;
-      //uint32_t* tx_hwb;
+    tdesc_advance_tx_wbf_t* tx_ring;
+    void** tx_opaque;
+    bool* tx_isctx;
+    size_t tx_head;
+    size_t tx_tail;
+    size_t tx_lasttail;
+    size_t tx_size;
+    // uint32_t* tx_hwb;
 
-      rdesc_advance_wbf_t* rx_ring;
-      struct e10k_queue_rxctx*        rx_context;
-      size_t                          rx_head;
-      size_t                          rx_tail;
-      size_t                          rx_size;
-      
-      //struct e10k_queue_ops           ops;
-      //void*                           opaque;
+    rdesc_advance_wbf_t* rx_ring;
+    struct e10k_queue_rxctx* rx_context;
+    size_t rx_head;
+    size_t rx_tail;
+    size_t rx_size;
+
+    // struct e10k_queue_ops           ops;
+    // void*                           opaque;
+
+    } e10k_queue_t;*/
+
+    // Queue
+  typedef struct {
+      rdesc_legacy_t* rx_ring;
+      size_t rx_head;
+      size_t rx_tail;
+      size_t rx_size;
       
   } e10k_queue_t;
-  
-  e10k_queue_t *ixgq_;
+  e10k_queue_t* ixgq;
+
+  void *rxbuf;
 
 };  // class IxgbeDriver
 }  // namespace ebbrt
