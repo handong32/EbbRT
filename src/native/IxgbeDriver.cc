@@ -20,26 +20,55 @@ void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   ebbrt::clock::SleepMilli(200);
   ebbrt::kprintf("intel 82599 card initialzed\n");
 
-  /*while (1) {
-    ebbrt::clock::SleepMilli(10000);
-    ebbrt::kprintf("Slept 10s: ");
-    ixgbe_dev->ReadGprc();
-    ixgbe_dev->ProcessPacket(0);
-  }*/
+  while (1) {
+      //ebbrt::clock::SleepMilli(10000);
+      //ebbrt::kprintf("Slept 10s: ");
+      //ixgbe_dev->ReadGprc();
+      ixgbe_dev->ProcessPacket(0);
+  }
 }
 
-void ebbrt::IxgbeDriver::ProcessPacket(uint32_t n) {
-  rdesc_legacy_t tmp;
-  tmp = ixgq->rx_ring[ixgq->rx_head];
-  
-  std::atomic_thread_fence(std::memory_order_release);
-  if (tmp.dd && tmp.eop) {
-      auto t = reinterpret_cast<uintptr_t>(tmp.buffer_address);
-      auto t2 = reinterpret_cast<uint64_t>(&t);
-      ebbrt::kprintf("Packet recv complete, %p\n", t2);
+/*
+ * Note: if packet len is hardcoded to be > 60, even
+ * if the data sent is less than 60 bytes
+ */
+uint32_t ebbrt::IxgbeDriver::GetRxBuf(uint32_t* len, uint64_t* bAddr) {
+    rdesc_legacy_t tmp;
+    tmp = ixgq->rx_ring[ixgq->rx_head];
     
-    ixgq->rx_head = (ixgq->rx_head + 1) % ixgq->rx_size;
+    std::atomic_thread_fence(std::memory_order_release);
+
+    // if got new packet
+    if (tmp.dd && tmp.eop) {
+	
+  
+      auto p1 = reinterpret_cast<uint8_t*>(tmp.buffer_address);
+      for(auto i = 0; i < tmp.length; i++) {
+	  ebbrt::kprintf("0x%02X ", *p1);
+	  p1++;
+      }
+      
+      ebbrt::kprintf("\n");
+
+      //reset descriptor
+      memset(ixgq->rx_ring[ixgq->rx_head], 0, sizeof(rdesc_legacy_t));
+      
+      ixgq->rx_head = (ixgq->rx_head + 1) % ixgq->rx_size;
   }
+}
+
+
+void ebbrt::IxgbeDriver::ProcessPacket(uint32_t n) {
+    
+    uint32_t len;
+    uint64_t bAddr;
+    
+    // get address of buffer with data
+    while(GetRxBuf(&len, &bAddr) == 0) {
+	
+    }
+
+    ebbrt::kprintf("rx_head: %d, %d, %p\n", ixgq->rx_head, tmp.length, tmp.buffer_address);
 }
 
 void ebbrt::IxgbeDriver::InitStruct() {
@@ -1086,18 +1115,27 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
   ebbrt::kprintf("RX enabled\n");
 
   // Add RX Buffers to ring
-  rxbuf = (void*)malloc(RXBUFSZ * (NRXDESCS - 1));
+  rxbuf = malloc(RXBUFSZ * (NRXDESCS - 1));
   assert(rxbuf != NULL);
+  memset(rxbuf, 0, RXBUFSZ * (NRXDESCS - 1));
+
+  /*int* p1 = static_cast<int*>(rxbuf);
+  ebbrt::kprintf("p1 = %d\n", *p1);
+  p1++;
+  ebbrt::kprintf("p1 = %d\n", *p1);*/
+
   ebbrt::kprintf("Allocated RX buffer: %p\n\n", rxbuf);
 
   // add buffer to each descriptor
   for (auto i = 0; i < 256 - 1; i++) {
-    auto rxphys = (uint64_t)rxbuf + (i * RXBUFSZ);
+      auto rxphys = reinterpret_cast<uint64_t>(static_cast<char*>(rxbuf) + (i * RXBUFSZ));
+    // auto rxphys = (uint64_t)rxbuf + (i * RXBUFSZ);
     auto tail = ixgq->rx_tail;
     ixgq->rx_ring[tail].buffer_address =
-        (uint64_t)rxphys;  // update buffer address for descriptor
-    // ebbrt::kprintf("Descriptor #%d: %p %p\n", tail, rxphys,
-    // ixgq->rx_ring[tail].buffer_address);
+        rxphys;  // update buffer address for descriptor
+
+    //ebbrt::kprintf("Descriptor #%d: %p %p\n", tail, rxphys,
+//		   ixgq->rx_ring[tail].buffer_address);
 
     ixgq->rx_tail = (tail + 1) % ixgq->rx_size;
 
@@ -1109,8 +1147,9 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
   ebbrt::kprintf("bumping tail: %d\n", ixgq->rx_tail);
   WriteRdt_1(i, ixgq->rx_tail);
 
+  
   ebbrt::kprintf("RX Queue setup complete\n");
-
+  
   // Initialize TX queue in HW
   /*uint64_t txaddr = reinterpret_cast<uint64_t>(ixgq_->tx_ring);
   uint32_t txaddrl = txaddr & 0xFFFFFFFF;

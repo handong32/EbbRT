@@ -190,7 +190,7 @@ class IxgbeDriver {
 
   // Process
   void ProcessPacket(uint32_t n);
-  
+  uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr);
   pci::Device& dev_;
   pci::Bar& bar0_;
 
