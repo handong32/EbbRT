@@ -41,20 +41,23 @@ uint32_t ebbrt::IxgbeDriver::GetRxBuf(uint32_t* len, uint64_t* bAddr) {
     // if got new packet
     if (tmp.dd && tmp.eop) {
 	
-  
-      auto p1 = reinterpret_cast<uint8_t*>(tmp.buffer_address);
-      for(auto i = 0; i < tmp.length; i++) {
-	  ebbrt::kprintf("0x%02X ", *p1);
-	  p1++;
-      }
+	//set len and address
+	*len = tmp.length;
+	*bAddr = tmp.buffer_address;
+	
       
-      ebbrt::kprintf("\n");
-
-      //reset descriptor
-      memset(ixgq->rx_ring[ixgq->rx_head], 0, sizeof(rdesc_legacy_t));
-      
-      ixgq->rx_head = (ixgq->rx_head + 1) % ixgq->rx_size;
+	//reset descriptor
+	ixgq->rx_ring[ixgq->rx_head].raw[0] = 0;
+	ixgq->rx_ring[ixgq->rx_head].raw[1] = 0;
+	ebbrt::kprintf("reset descriptor: %d %ld %ld\n", ixgq->rx_head, ixgq->rx_ring[ixgq->rx_head].raw[0], ixgq->rx_ring[ixgq->rx_head].raw[1]);
+	
+	//bump head ptr
+	ixgq->rx_head = (ixgq->rx_head + 1) % ixgq->rx_size;
+	ebbrt::kprintf("BUMP NEW head ptr: %d, HW head ptr (auto increment): %d\n", ixgq->rx_head, ReadRdh_1(0));
+	
+	return 0;
   }
+    return 1;
 }
 
 
@@ -62,13 +65,36 @@ void ebbrt::IxgbeDriver::ProcessPacket(uint32_t n) {
     
     uint32_t len;
     uint64_t bAddr;
+    auto count = 0;
     
     // get address of buffer with data
     while(GetRxBuf(&len, &bAddr) == 0) {
+	ebbrt::kprintf("%s: len=%d, bAddr=%p\n", __FUNCTION__, len, bAddr);
+
+	//dump eth packet info
+	auto p1 = reinterpret_cast<uint8_t*>(bAddr);
+	for(uint32_t i = 0; i < len; i++) {
+	    ebbrt::kprintf("0x%02X ", *p1);
+	    p1++;
+	}
+	ebbrt::kprintf("\n");
+
+	// done with buffer addr above, now to reuse it
+	auto tail = ixgq->rx_tail;
+	ixgq->rx_ring[tail].buffer_address = bAddr;
 	
+	//bump tail ptr
+	ixgq->rx_tail = (tail + 1) % ixgq->rx_size;
+	
+	count ++;
     }
 
-    ebbrt::kprintf("rx_head: %d, %d, %p\n", ixgq->rx_head, tmp.length, tmp.buffer_address);
+    if (count > 0)
+    {
+	ebbrt::kprintf("NEW head=%d tail=%d\n", ixgq->rx_head, ixgq->rx_tail);
+	//update reg
+	WriteRdt_1(n, ixgq->rx_tail);
+    }
 }
 
 void ebbrt::IxgbeDriver::InitStruct() {
@@ -663,7 +689,7 @@ void ebbrt::IxgbeDriver::WriteSrrctl_1(uint32_t n, uint32_t m) {
     }*/
 
 void ebbrt::IxgbeDriver::WriteSrrctl_1_desctype(uint32_t n, uint32_t m) {
-  auto reg = bar0_.Read32(0x01014 + 0x40 * n);
+    auto reg = bar0_.Read32(0x01014 + 0x40 * n);
   bar0_.Write32(0x01014 + 0x40 * n, reg & m);
 }
 
@@ -676,10 +702,15 @@ void ebbrt::IxgbeDriver::WriteRdt_2(uint32_t n, uint32_t m) {
   bar0_.Write32(0x0D018 + 0x40 * n, m);
 }
 
+
 // 8.2.3.8.4 Receive Descriptor Head — RDH[n] (0x01010 + 0x40*n, n=0...63 and
 // 0x0D010 + 0x40*(n-64), n=64...127; RO)
 void ebbrt::IxgbeDriver::WriteRdh_1(uint32_t n, uint32_t m) {
   bar0_.Write32(0x01010 + 0x40 * n, m);
+}
+uint16_t ebbrt::IxgbeDriver::ReadRdh_1(uint32_t n) {
+    auto reg = bar0_.Read32(0x01010 + 0x40 * n);
+    return reg & 0xFFFF;
 }
 
 void ebbrt::IxgbeDriver::SwfwSemRelease() {
@@ -1124,7 +1155,7 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
   p1++;
   ebbrt::kprintf("p1 = %d\n", *p1);*/
 
-  ebbrt::kprintf("Allocated RX buffer: %p\n\n", rxbuf);
+  ebbrt::kprintf("Allocated RX buffer: %p\n", rxbuf);
 
   // add buffer to each descriptor
   for (auto i = 0; i < 256 - 1; i++) {
@@ -1144,11 +1175,10 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
 
   // bump tail pts via register rdt to enable descriptor fetching by setting to
   // length of ring minus one
-  ebbrt::kprintf("bumping tail: %d\n", ixgq->rx_tail);
   WriteRdt_1(i, ixgq->rx_tail);
 
   
-  ebbrt::kprintf("RX Queue setup complete\n");
+  ebbrt::kprintf("RX Queue setup complete - head=%d tail=%d\n\n", ixgq->rx_head, ixgq->rx_tail);
   
   // Initialize TX queue in HW
   /*uint64_t txaddr = reinterpret_cast<uint64_t>(ixgq_->tx_ring);

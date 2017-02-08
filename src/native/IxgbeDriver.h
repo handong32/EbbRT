@@ -182,6 +182,8 @@ class IxgbeDriver {
 
   uint8_t ReadTxdctl_enable(uint32_t n);
 
+  uint16_t ReadRdh_1(uint32_t n);
+  
   // statistics
   uint32_t ReadTpr();
   uint32_t ReadGprc();
