@@ -193,6 +193,8 @@ class IxgbeDriver {
   // Process
   void ProcessPacket(uint32_t n);
   uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr);
+  void SendPacket(uint32_t n);
+  
   pci::Device& dev_;
   pci::Bar& bar0_;
 
@@ -547,6 +549,12 @@ class IxgbeDriver {
       size_t rx_head;
       size_t rx_tail;
       size_t rx_size;
+
+      tdesc_legacy_t* tx_ring;
+      size_t tx_head;
+      size_t tx_tail;
+      size_t tx_size;
+
       
   } e10k_queue_t;
   e10k_queue_t* ixgq;
