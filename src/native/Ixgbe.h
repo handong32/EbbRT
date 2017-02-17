@@ -387,4 +387,21 @@ typedef struct {
 
 } e10k_queue_t;
 
+struct VirtioNetHeader {
+    static const constexpr uint8_t kNeedsCsum = 1;
+    static const constexpr uint8_t kGsoNone = 0;
+    static const constexpr uint8_t kGsoTcpv4 = 1;
+    static const constexpr uint8_t kGsoUdp = 3;
+    static const constexpr uint8_t kGsoTcpv6 = 4;
+    static const constexpr uint8_t kGsoEvn = 0x80;
+
+    uint8_t flags;
+    uint8_t gso_type;
+    uint16_t hdr_len;
+    uint16_t gso_size;
+    uint16_t csum_start;
+    uint16_t csum_offset;
+    uint16_t num_buffers;
+};
+
 #endif  // BAREMETAL_SRC_INCLUDE_EBBRT_IXGBE_H_

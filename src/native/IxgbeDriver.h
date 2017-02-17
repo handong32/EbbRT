@@ -10,19 +10,32 @@
 #include "../SpinLock.h"
 #include "Debug.h"
 #include "Fls.h"
+#include "Ixgbe.h"
+#include "Net.h"
 #include "PageAllocator.h"
 #include "Pci.h"
 #include "Pfn.h"
 #include "SlabAllocator.h"
-#include "Net.h"
-#include "Ixgbe.h"
 
 namespace ebbrt {
 
 class IxgbeDriverRep;
 
-class IxgbeDriver {
+class IxgbeDriver : public EthernetDevice {
  public:
+  explicit IxgbeDriver(pci::Device& dev)
+      : itf_(network_manager->NewInterface(*this)), dev_(dev),
+        bar0_(dev.GetBar(0)) {
+    dev_.SetBusMaster(true);
+
+    // set up interrupts, polling won't work after this
+    auto msix = dev_.MsixEnable();
+    kbugon(!msix, "Ixgbe without msix is unsupported\n");
+
+    ebbrt::kprintf("%s constructor\n", __FUNCTION__);
+  }
+  
+  static void Create(pci::Device& dev);
   static bool Probe(pci::Device& dev) {
     if (dev.GetVendorId() == kIxgbeVendorId &&
         dev.GetDeviceId() == kIxgbeDeviceId && dev.GetFunc() == 0) {
@@ -32,8 +45,9 @@ class IxgbeDriver {
     return false;
   }
 
-  static void Create(pci::Device& dev);
   void Run();
+  void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) override;
+  const EthernetAddress& GetMacAddress() override;
   
  protected:
   static const constexpr uint16_t kIxgbeVendorId = 0x8086;
@@ -53,18 +67,10 @@ class IxgbeDriver {
   static const constexpr uint32_t NRXDESCS = 256;
   static const constexpr uint32_t RXBUFSZ = 2048;
 
-  explicit IxgbeDriver(pci::Device& dev) : dev_(dev), bar0_(dev.GetBar(0)) {
-    dev_.SetBusMaster(true);
-
-    // set up interrupts, polling won't work after this
-    auto msix = dev_.MsixEnable();
-    kbugon(!msix, "Ixgbe without msix is unsupported\n");
-
-    ebbrt::kprintf("%s constructor\n", __FUNCTION__);
-  }
-
  private:
   EbbRef<IxgbeDriverRep> ebb_;
+  NetworkManager::Interface& itf_;
+  EthernetAddress mac_addr_;
 
   void InitStruct();
   void DeviceInfo();
@@ -180,7 +186,7 @@ class IxgbeDriver {
   void WriteRdrxctl(uint32_t m);
   void WriteEiac(uint32_t m);
   void WriteEimsn(uint32_t n, uint32_t m);
-  
+
   uint8_t ReadRdrxctlDmaidone();
 
   void ReadEicr();
@@ -218,7 +224,7 @@ class IxgbeDriver {
   void SendPacket(uint32_t n);
 
   e10k_queue_t& GetQueue() const { return *ixgq; }
-  
+
   pci::Device& dev_;
   pci::Bar& bar0_;
 
@@ -229,7 +235,7 @@ class IxgbeDriver {
   };
 
   e10k_queue_t* ixgq;
-  
+
   void* rxbuf;
 
   friend class IxgbeDriverRep;
@@ -240,16 +246,18 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
   explicit IxgbeDriverRep(const IxgbeDriver& root);
   void Run();
   void ReceivePoll(uint32_t n);
+  void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo);
   
-private:
+ private:
   uint16_t ReadRdh_1(uint32_t n);
   void WriteRdt_1(uint32_t n, uint32_t m);
+  void WriteTdt_1(uint32_t n, uint32_t m);
   uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr);
-  
+
   const IxgbeDriver& root_;
   e10k_queue_t& ixgq_;
   EventManager::IdleCallback receive_callback_;
-  
+
 };  // class IxgbeDriverRep
 
 }  // namespace ebbrt
