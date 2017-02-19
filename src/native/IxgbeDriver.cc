@@ -24,7 +24,7 @@ void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   ebbrt::kprintf("intel 82599 card initialzed\n");
 
   // Send test packet
-  // ixgbe_dev->SendPacket(0);
+  //ixgbe_dev->SendPacket(0);
 
   /*while (1) {
     // ebbrt::clock::SleepMilli(10000);
@@ -48,18 +48,30 @@ void ebbrt::IxgbeDriver::Run() { ebb_->Run(); }
 
 void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
 
-  std::unique_ptr<MutUniqueIOBuf> b;
-  VirtioNetHeader* header;
+    //std::unique_ptr<StaticIOBuf> b;
+    //auto b = MakeUniqueIOBuf(0);
+    VirtioNetHeader* header;
 
-  auto len = buf->ComputeChainDataLength();
-  b = MakeUniqueIOBuf(len + sizeof(VirtioNetHeader));
-  memset(b->MutData(), 0, sizeof(VirtioNetHeader));
-  header = reinterpret_cast<VirtioNetHeader*>(b->MutData());
-  auto data = b->MutData() + sizeof(VirtioNetHeader);
-  for (auto& buf_it : *buf) {
-    memcpy(data, buf_it.Data(), buf_it.Length());
-    data += buf_it.Length();
+  //auto len = buf->ComputeChainDataLength();
+    //ebbrt::kprintf("%s chain elements = %d, %d\n", __PRETTY_FUNCTION__, buf->CountChainElements(), buf->ComputeChainDataLength());
+  
+    //auto dp = buf->GetDataPointer();
+    //auto len = buf->ComputeChainDataLength();
+    //auto txbuf = dp.Get(len * sizeof(uint8_t));
+  
+  /*auto t = dp.Get(buf->ComputeChainDataLength() * sizeof(uint8_t));
+  for(size_t i = 0; i < buf->ComputeChainDataLength(); i++)
+  {
+      ebbrt::kprintf("%02X ", t[i]);
   }
+  ebbrt::kprintf("\n\n");*/
+
+  // we have enough descriptors to avoid a copy
+  auto b = MakeUniqueIOBuf(sizeof(VirtioNetHeader),  true);
+  header = reinterpret_cast<VirtioNetHeader*>(b->MutData());
+  b->PrependChain(std::move(buf));
+
+  //auto len = buf->ComputeChainDataLength();
 
   kassert(header != nullptr);
   if (pinfo.flags & PacketInfo::kNeedsCsum) {
@@ -73,20 +85,35 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     header->gso_size = pinfo.gso_size;
   }
   
-  auto elements = b->CountChainElements();
-  
-  auto txphys = reinterpret_cast<uint64_t>(b->MutData());
+  //auto elements = b->CountChainElements();
+  //uint64_t tmp1 = static_cast<uint64_t>(elements);
+
+  //auto txphys = reinterpret_cast<uint64_t>(b->MutData());
+  //auto txbuf = (uint8_t*)malloc(sizeof(uint8_t) * len);
+  //memset(txbuf, 0, len * sizeof(uint8_t));
+  //auto dp = buf->GetDataPointer();
+
+  auto dp = b->GetDataPointer();
+  auto len = b->ComputeChainDataLength();
+  auto txbuf = dp.Get(len * sizeof(uint8_t));
+
+
   auto tail = ixgq_.tx_tail;
   // update buffer address for descriptor
-  ixgq_.tx_ring[tail].buffer_address = txphys;
-  ixgq_.tx_ring[tail].length = elements;
+  ixgq_.tx_ring[tail].buffer_address = reinterpret_cast<uint64_t>(txbuf);
+  ixgq_.tx_ring[tail].length = len;
   ixgq_.tx_ring[tail].eop = 1;  // indicate end of packet
-  ixgq_.tx_ring[tail].rs =
-      1;  // so that hw will modify dd bit after packet transmitted
+  // so that hw will modify dd bit after packet transmitted
+  ixgq_.tx_ring[tail].rs = 1;  
 
-  ebbrt::kprintf("taddr - %p %p len:%d\n", b->MutData(),
+  ebbrt::kprintf("taddr - %p %p len:%ld\n", txbuf,
                  ixgq_.tx_ring[tail].buffer_address,
                  ixgq_.tx_ring[tail].length);
+
+  for (size_t i = 0; i < len; i++) {
+      ebbrt::kprintf("%02X ", txbuf[i]);
+  }
+  ebbrt::kprintf("\n\n");
 
   auto n = 0;
   // bump tx_tail
@@ -95,7 +122,8 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
                                // can process
 
   auto head = ixgq_.tx_head;
-  std::atomic_thread_fence(std::memory_order_release);
+  //std::atomic_thread_fence(std::memory_order_release);
+  ebbrt::kprintf("dd = %d\n", ixgq_.tx_ring[head].dd);
   while (ixgq_.tx_ring[head].dd == 0) {
   }  // hw will transmit packet pointed by head, after tranmission, dd bit is
      // set and head is incremented, finish processing when head == tail
@@ -147,7 +175,7 @@ void ebbrt::IxgbeDriver::SendPacket(uint32_t n) {
     txbuf[i] = 0x22;
   }
 
-  ebbrt::kprintf("%s\n", __FUNCTION__);
+  ebbrt::kprintf("%s\n", __PRETTY_FUNCTION__);
   for (auto i = 0; i < 60; i++) {
     ebbrt::kprintf("%02X ", txbuf[i]);
   }
@@ -159,8 +187,7 @@ void ebbrt::IxgbeDriver::SendPacket(uint32_t n) {
   ixgq->tx_ring[tail].buffer_address = txphys;
   ixgq->tx_ring[tail].length = 60;
   ixgq->tx_ring[tail].eop = 1;  // indicate end of packet
-  ixgq->tx_ring[tail].rs =
-      1;  // so that hw will modify dd bit after packet transmitted
+  ixgq->tx_ring[tail].rs = 1;  // so that hw will modify dd bit after packet transmitted
 
   ebbrt::kprintf("taddr - %p %p len:%d\n", txbuf,
                  ixgq->tx_ring[tail].buffer_address,
@@ -172,7 +199,8 @@ void ebbrt::IxgbeDriver::SendPacket(uint32_t n) {
                                // can process
 
   auto head = ixgq->tx_head;
-  std::atomic_thread_fence(std::memory_order_release);
+  //std::atomic_thread_fence(std::memory_order_seq_cst);
+  ebbrt::kprintf("dd = %d\n", ixgq->tx_ring[head].dd);
   while (ixgq->tx_ring[head].dd == 0) {
   }  // hw will transmit packet pointed by head, after tranmission, dd bit is
      // set and head is incremented, finish processing when head == tail
@@ -1156,7 +1184,7 @@ void ebbrt::IxgbeDriver::Init() {
 
   // Wait for DMA initialization
   while (ReadRdrxctlDmaidone() == 0)
-    ;  // TODO: Timeout
+  ;  // TODO: Timeout
 
   // Wait for link to come up
   while (!ReadLinksLinkUp())
@@ -1347,10 +1375,10 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
 
   // setup RX interrupts for queue 0
   auto rcv_vector =
-      event_manager->AllocateVector([this, i]() { ebb_->ReceivePoll(i); });
+    event_manager->AllocateVector([this, i]() { ebb_->ReceivePoll(i); });
   dev_.SetMsixEntry(i * 2, rcv_vector, i);  // TODO: fix
 
-  // auto ii = i / 2;
+  //auto ii = i / 2;
   // if((i % 2) == 0) {
   WriteIvarAlloc0(i, 0);
   WriteIvarAllocval0(i, 0x1 << 7);
@@ -1486,12 +1514,12 @@ void ebbrt::IxgbeDriverRep::ReceivePoll(uint32_t n) {
     ebbrt::kprintf("%s: len=%d, bAddr=%p\n", __FUNCTION__, len, bAddr);
 
     // dump eth packet info
-    /*auto p1 = reinterpret_cast<uint8_t*>(bAddr);
+    auto p1 = reinterpret_cast<uint8_t*>(bAddr);
     for (uint32_t i = 0; i < len; i++) {
       ebbrt::kprintf("0x%02X ", *p1);
       p1++;
     }
-    ebbrt::kprintf("\n");*/
+    ebbrt::kprintf("\n");
 
     // done with buffer addr above, now to reuse it
     auto tail = ixgq_.rx_tail;
