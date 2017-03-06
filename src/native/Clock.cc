@@ -40,3 +40,9 @@ void ebbrt::clock::SleepMilli(uint32_t t) {
   while ((ebbrt::clock::Wall::Now() - t1) < std::chrono::milliseconds(t)) {
   }
 }
+
+void ebbrt::clock::SleepMicro(uint32_t t) {
+  auto t1 = ebbrt::clock::Wall::Now();
+  while ((ebbrt::clock::Wall::Now() - t1) < std::chrono::microseconds(t)) {
+  }
+}

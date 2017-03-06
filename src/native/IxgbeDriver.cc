@@ -9,26 +9,1329 @@
 #include "Clock.h"
 #include "Debug.h"
 #include "EventManager.h"
-#include "Ixgbe.h"
 
 #include <atomic>
 
+#define IXGBE_READ_REG(h, r) ixgbe_read_reg(h, r, false)
+#define IXGBE_R32_Q(h, r) ixgbe_read_reg(h, r, true)
+
+#define IXGBE_READ_REG_ARRAY(a, reg, offset)                                   \
+  (IXGBE_READ_REG((a), (reg) + ((offset) << 2)))
+
+#define IXGBE_WRITE_REG ixgbe_write_reg
+
+#define IXGBE_WRITE_FLUSH(a) IXGBE_READ_REG(a, IXGBE_STATUS)
+
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
-  ixgbe_dev->Init();
+  ixgbe_dev->ixgbe_probe(dev);
+  /*ixgbe_dev->Init();
   ixgbe_dev->SetupQueue(0);
   ebbrt::clock::SleepMilli(200);
   ebbrt::kprintf("intel 82599 card initialzed\n");
 
   // Send test packet
   ixgbe_dev->SendPacket(0);
-  
+
   while (1) {
-    // ebbrt::clock::SleepMilli(10000);
+  // ebbrt::clock::SleepMilli(10000);
     // ebbrt::kprintf("Slept 10s: ");
     // ixgbe_dev->ReadGprc();
     ixgbe_dev->ProcessPacket(0);
+  }*/
+}
+
+void ebbrt::IxgbeDriver::ixgbe_write_reg(struct ixgbe_hw* hw, u32 reg,
+                                         u32 value) {
+  bar0_.Write32(reg, value);
+}
+
+u32 ebbrt::IxgbeDriver::ixgbe_read_reg(struct ixgbe_hw* hw, u32 reg,
+                                       bool quiet) {
+  u32 value;
+
+  value = bar0_.Read32(reg);
+  if (value == IXGBE_FAILED_READ_REG || value == IXGBE_DEAD_READ_REG) {
+    ebbrt::kabort("%s failed\n", __PRETTY_FUNCTION__);
   }
+  return value;
+}
+
+/**
+ *  ixgbe_disable_pcie_master - Disable PCI-express master access
+ *  @hw: pointer to hardware structure
+ *
+ *  Disables PCI-Express master access and verifies there are no pending
+ *  requests. IXGBE_ERR_MASTER_REQUESTS_PENDING is returned if master disable
+ *  bit hasn't caused the master requests to be disabled, else IXGBE_SUCCESS
+ *  is returned signifying master requests disabled.
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_disable_pcie_master(struct ixgbe_hw *hw)
+{
+	s32 status = IXGBE_SUCCESS;
+	u32 i, poll;
+	u16 value;
+
+	DEBUGFUNC("ixgbe_disable_pcie_master\n");
+
+	/* Always set this bit to ensure any future transactions are blocked */
+	IXGBE_WRITE_REG(hw, IXGBE_CTRL, IXGBE_CTRL_GIO_DIS);
+	
+	//ebbrt::clock::SleepMilli(2);
+	
+	/* Exit if master requests are blocked */
+	/*if (!(IXGBE_READ_REG(hw, IXGBE_STATUS) & IXGBE_STATUS_GIO))
+	{
+	    ebbrt::kabort("master requests blocked\n");
+	    //IXGBE_REMOVED(hw->hw_addr))
+	    goto out;
+	    }*/
+
+	/* Poll for master request bit to clear */
+	for (i = 0; i < IXGBE_PCI_MASTER_DISABLE_TIMEOUT; i++) {
+	    ebbrt::clock::SleepMilli(1);
+	    //usec_delay(100);
+	    if (!(IXGBE_READ_REG(hw, IXGBE_STATUS) & IXGBE_STATUS_GIO))
+		goto out;
+	}
+
+	ebbrt::kabort("master request not cleared\n");
+	/*
+	 * Two consecutive resets are required via CTRL.RST per datasheet
+	 * 5.2.5.3.2 Master Disable.  We set a flag to inform the reset routine
+	 * of this need.  The first reset prevents new master requests from
+	 * being issued by our device.  We then must wait 1usec or more for any
+	 * remaining completions from the PCIe bus to trickle in, and then reset
+	 * again to clear out any effects they may have had on our device.
+	 */
+	//DEBUGOUT("GIO Master Disable bit didn't clear - requesting resets\n");
+	// hw->mac.flags |= IXGBE_FLAGS_DOUBLE_RESET_REQUIRED;
+
+	// if (hw->mac.type >= ixgbe_mac_X550)
+	// 	goto out;
+
+	// /*
+	//  * Before proceeding, make sure that the PCIe block does not have
+	//  * transactions pending.
+	//  */
+	// poll = ixgbe_pcie_timeout_poll(hw);
+	// for (i = 0; i < poll; i++) {
+	//     //usec_delay(100);
+	//     ebbrt::clock::SleepMilli(1);
+	// 	value = IXGBE_READ_PCIE_WORD(hw, IXGBE_PCI_DEVICE_STATUS);
+	// 	//if (IXGBE_REMOVED(hw->hw_addr))
+	// 	//	goto out;
+	// 	if (!(value & IXGBE_PCI_DEVICE_STATUS_TRANSACTION_PENDING))
+	// 		goto out;
+	// }
+
+	// ERROR_REPORT1(IXGBE_ERROR_POLLING,
+	// 	     "PCIe transaction pending bit also did not clear.\n");
+	// status = IXGBE_ERR_MASTER_REQUESTS_PENDING;
+
+out:
+	return status;
+}
+
+/**
+ * ixgbe_mng_enabled - Is the manageability engine enabled?
+ * @hw: pointer to hardware structure
+ *
+ * Returns true if the manageability engine is enabled.
+ **/
+bool ebbrt::IxgbeDriver::ixgbe_mng_enabled(struct ixgbe_hw* hw) {
+  u32 fwsm, manc, factps;
+
+  fwsm = IXGBE_READ_REG(hw, IXGBE_FWSM_BY_MAC(hw));
+  if ((fwsm & IXGBE_FWSM_MODE_MASK) != IXGBE_FWSM_FW_MODE_PT)
+    return false;
+
+  manc = IXGBE_READ_REG(hw, IXGBE_MANC);
+  if (!(manc & IXGBE_MANC_RCV_TCO_EN))
+    return false;
+
+  if (hw->mac.type <= ixgbe_mac_X540) {
+    factps = IXGBE_READ_REG(hw, IXGBE_FACTPS_BY_MAC(hw));
+    if (factps & IXGBE_FACTPS_MNGCG)
+      return false;
+  }
+
+  return true;
+}
+
+/**
+ *  ixgbe_set_mac_type - Sets MAC type
+ *  @hw: pointer to the HW structure
+ *
+ *  This function sets the mac type of the adapter based on the
+ *  vendor ID and device ID stored in the hw structure.
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_set_mac_type(struct ixgbe_hw* hw) {
+  s32 ret_val = IXGBE_SUCCESS;
+
+  DEBUGFUNC("ixgbe_set_mac_type\n");
+
+  if (hw->vendor_id != IXGBE_INTEL_VENDOR_ID) {
+    DEBUGOUT2("Unsupported vendor id: %x", hw->vendor_id);
+    return IXGBE_ERR_DEVICE_NOT_SUPPORTED;
+  }
+
+  hw->mvals = ixgbe_mvals_base;
+
+  switch (hw->device_id) {
+  case IXGBE_DEV_ID_82598:
+  case IXGBE_DEV_ID_82598_BX:
+  case IXGBE_DEV_ID_82598AF_SINGLE_PORT:
+  case IXGBE_DEV_ID_82598AF_DUAL_PORT:
+  case IXGBE_DEV_ID_82598AT:
+  case IXGBE_DEV_ID_82598AT2:
+  case IXGBE_DEV_ID_82598EB_CX4:
+  case IXGBE_DEV_ID_82598_CX4_DUAL_PORT:
+  case IXGBE_DEV_ID_82598_DA_DUAL_PORT:
+  case IXGBE_DEV_ID_82598_SR_DUAL_PORT_EM:
+  case IXGBE_DEV_ID_82598EB_XF_LR:
+  case IXGBE_DEV_ID_82598EB_SFP_LOM:
+    hw->mac.type = ixgbe_mac_82598EB;
+    break;
+  case IXGBE_DEV_ID_82599_KX4:
+  case IXGBE_DEV_ID_82599_KX4_MEZZ:
+  case IXGBE_DEV_ID_82599_XAUI_LOM:
+  case IXGBE_DEV_ID_82599_COMBO_BACKPLANE:
+  case IXGBE_DEV_ID_82599_KR:
+  case IXGBE_DEV_ID_82599_SFP:
+  case IXGBE_DEV_ID_82599_BACKPLANE_FCOE:
+  case IXGBE_DEV_ID_82599_SFP_FCOE:
+  case IXGBE_DEV_ID_82599_SFP_EM:
+  case IXGBE_DEV_ID_82599_SFP_SF2:
+  case IXGBE_DEV_ID_82599_SFP_SF_QP:
+  case IXGBE_DEV_ID_82599_QSFP_SF_QP:
+  case IXGBE_DEV_ID_82599EN_SFP:
+  case IXGBE_DEV_ID_82599_CX4:
+  case IXGBE_DEV_ID_82599_LS:
+  case IXGBE_DEV_ID_82599_T3_LOM:
+    hw->mac.type = ixgbe_mac_82599EB;
+    break;
+  default:
+    ret_val = IXGBE_ERR_DEVICE_NOT_SUPPORTED;
+    DEBUGOUT2("Unsupported device id: %x", hw->device_id);
+    break;
+  }
+
+  DEBUGOUT2("ixgbe_set_mac_type found mac: %d, returns: %d\n", hw->mac.type,
+            ret_val);
+  return ret_val;
+}
+
+/**
+ *  ixgbe_get_media_type_82599 - Get media type
+ *  @hw: pointer to hardware structure
+ *
+ *  Returns the media type (fiber, copper, backplane)
+ **/
+enum ixgbe_media_type
+ebbrt::IxgbeDriver::ixgbe_get_media_type_82599(struct ixgbe_hw* hw) {
+  enum ixgbe_media_type media_type;
+
+  DEBUGFUNC("ixgbe_get_media_type_82599\n");
+
+  /* Detect if there is a copper PHY attached. */
+  switch (hw->phy.type) {
+  case ixgbe_phy_cu_unknown:
+  case ixgbe_phy_tn:
+    media_type = ixgbe_media_type_copper;
+    goto out;
+  default:
+    break;
+  }
+
+  switch (hw->device_id) {
+  case IXGBE_DEV_ID_82599_KX4:
+  case IXGBE_DEV_ID_82599_KX4_MEZZ:
+  case IXGBE_DEV_ID_82599_COMBO_BACKPLANE:
+  case IXGBE_DEV_ID_82599_KR:
+  case IXGBE_DEV_ID_82599_BACKPLANE_FCOE:
+  case IXGBE_DEV_ID_82599_XAUI_LOM:
+    /* Default device ID is mezzanine card KX/KX4 */
+    media_type = ixgbe_media_type_backplane;
+    break;
+  case IXGBE_DEV_ID_82599_SFP:
+  case IXGBE_DEV_ID_82599_SFP_FCOE:
+  case IXGBE_DEV_ID_82599_SFP_EM:
+  case IXGBE_DEV_ID_82599_SFP_SF2:
+  case IXGBE_DEV_ID_82599_SFP_SF_QP:
+  case IXGBE_DEV_ID_82599EN_SFP:
+    media_type = ixgbe_media_type_fiber;
+    break;
+  case IXGBE_DEV_ID_82599_CX4:
+    media_type = ixgbe_media_type_cx4;
+    break;
+  case IXGBE_DEV_ID_82599_T3_LOM:
+    media_type = ixgbe_media_type_copper;
+    break;
+  case IXGBE_DEV_ID_82599_LS:
+    media_type = ixgbe_media_type_fiber_lco;
+    break;
+  case IXGBE_DEV_ID_82599_QSFP_SF_QP:
+    media_type = ixgbe_media_type_fiber_qsfp;
+    break;
+  default:
+    media_type = ixgbe_media_type_unknown;
+    break;
+  }
+out:
+  ebbrt::kprintf("media type = %d\n", media_type);
+  return media_type;
+}
+
+void ebbrt::IxgbeDriver::ixgbe_init_mac_link_ops_82599(struct ixgbe_hw* hw) {
+  struct ixgbe_mac_info* mac = &hw->mac;
+
+  DEBUGFUNC("ixgbe_init_mac_link_ops_82599\n");
+
+  /*
+   * enable the laser control functions for SFP+ fiber
+   * and MNG not enabled
+   */
+  // if ((mac->ops.get_media_type(hw) == ixgbe_media_type_fiber) &&
+  if ((ixgbe_get_media_type_82599(hw) == ixgbe_media_type_fiber) &&
+      !ixgbe_mng_enabled(hw)) {
+      ebbrt::kprintf("ixgbe_media_type_fiber\n");
+    // mac->ops.disable_tx_laser =
+    //	ixgbe_disable_tx_laser_multispeed_fiber;
+    /*mac->ops.enable_tx_laser =
+        ixgbe_enable_tx_laser_multispeed_fiber;
+        mac->ops.flap_tx_laser = ixgbe_flap_tx_laser_multispeed_fiber;*/
+
+  } else {
+    mac->ops.disable_tx_laser = NULL;
+    mac->ops.enable_tx_laser = NULL;
+    mac->ops.flap_tx_laser = NULL;
+  }
+
+  if (hw->phy.multispeed_fiber) {
+    /* Set up dual speed SFP+ support */
+    // mac->ops.setup_link = ixgbe_setup_mac_link_multispeed_fiber;
+    // mac->ops.setup_mac_link = ixgbe_setup_mac_link_82599;
+    // mac->ops.set_rate_select_speed =
+    //	ixgbe_set_hard_rate_select_speed;
+  }
+  // else {
+  // 	if ((ixgbe_get_media_type(hw) == ixgbe_media_type_backplane) &&
+  // 	     (hw->phy.smart_speed == ixgbe_smart_speed_auto ||
+  // 	      hw->phy.smart_speed == ixgbe_smart_speed_on) &&
+  // 	      !ixgbe_verify_lesm_fw_enabled_82599(hw)) {
+  // 		mac->ops.setup_link = ixgbe_setup_mac_link_smartspeed;
+  // 	} else {
+  // 		mac->ops.setup_link = ixgbe_setup_mac_link_82599;
+  // 	}
+  // }
+}
+
+/**
+ *  ixgbe_init_ops_generic - Inits function ptrs
+ *  @hw: pointer to the hardware structure
+ *
+ *  Initialize the function pointers.
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_init_ops_generic(struct ixgbe_hw* hw) {
+  struct ixgbe_eeprom_info* eeprom = &hw->eeprom;
+  struct ixgbe_mac_info* mac = &hw->mac;
+  u32 eec = IXGBE_READ_REG(hw, IXGBE_EEC_BY_MAC(hw));
+
+  DEBUGFUNC("ixgbe_init_ops_generic\n");
+
+  // /* EEPROM */
+  // eeprom->ops.init_params = ixgbe_init_eeprom_params_generic;
+  /* If EEPROM is valid (bit 8 = 1), use EERD otherwise use bit bang */
+  if (eec & IXGBE_EEC_PRES) {
+    ebbrt::kprintf("use EERD\n");
+    //eeprom->ops.read = ixgbe_read_eerd_generic;
+    //	eeprom->ops.read_buffer = ixgbe_read_eerd_buffer_generic;
+  } else {
+    ebbrt::kprintf("use EERD bit bang\n");
+    //	eeprom->ops.read = ixgbe_read_eeprom_bit_bang_generic;
+    //	eeprom->ops.read_buffer =
+    //			 ixgbe_read_eeprom_buffer_bit_bang_generic;
+  }
+  // eeprom->ops.write = ixgbe_write_eeprom_generic;
+  // eeprom->ops.write_buffer = ixgbe_write_eeprom_buffer_bit_bang_generic;
+  // eeprom->ops.validate_checksum =
+  // 			      ixgbe_validate_eeprom_checksum_generic;
+  // eeprom->ops.update_checksum = ixgbe_update_eeprom_checksum_generic;
+  // eeprom->ops.calc_checksum = ixgbe_calc_eeprom_checksum_generic;
+
+  // /* MAC */
+  // mac->ops.init_hw = ixgbe_init_hw_generic;
+  // mac->ops.reset_hw = NULL;
+  // mac->ops.start_hw = ixgbe_start_hw_generic;
+  // mac->ops.clear_hw_cntrs = ixgbe_clear_hw_cntrs_generic;
+  // mac->ops.get_media_type = NULL;
+  // mac->ops.get_supported_physical_layer = NULL;
+  // mac->ops.enable_rx_dma = ixgbe_enable_rx_dma_generic;
+  // mac->ops.get_mac_addr = ixgbe_get_mac_addr_generic;
+  // mac->ops.stop_adapter = ixgbe_stop_adapter_generic;
+  // mac->ops.get_bus_info = ixgbe_get_bus_info_generic;
+  // mac->ops.set_lan_id = ixgbe_set_lan_id_multi_port_pcie;
+  // mac->ops.acquire_swfw_sync = ixgbe_acquire_swfw_sync;
+  // mac->ops.release_swfw_sync = ixgbe_release_swfw_sync;
+  // mac->ops.prot_autoc_read = prot_autoc_read_generic;
+  // mac->ops.prot_autoc_write = prot_autoc_write_generic;
+
+  // /* LEDs */
+  // mac->ops.led_on = ixgbe_led_on_generic;
+  // mac->ops.led_off = ixgbe_led_off_generic;
+  // mac->ops.blink_led_start = ixgbe_blink_led_start_generic;
+  // mac->ops.blink_led_stop = ixgbe_blink_led_stop_generic;
+
+  // /* RAR, Multicast, VLAN */
+  // mac->ops.set_rar = ixgbe_set_rar_generic;
+  // mac->ops.clear_rar = ixgbe_clear_rar_generic;
+  // mac->ops.insert_mac_addr = NULL;
+  // mac->ops.set_vmdq = NULL;
+  // mac->ops.clear_vmdq = NULL;
+  // mac->ops.init_rx_addrs = ixgbe_init_rx_addrs_generic;
+  // mac->ops.update_uc_addr_list = ixgbe_update_uc_addr_list_generic;
+  // mac->ops.update_mc_addr_list = ixgbe_update_mc_addr_list_generic;
+  // mac->ops.enable_mc = ixgbe_enable_mc_generic;
+  // mac->ops.disable_mc = ixgbe_disable_mc_generic;
+  // mac->ops.clear_vfta = NULL;
+  // mac->ops.set_vfta = NULL;
+  // mac->ops.set_vlvf = NULL;
+  // mac->ops.init_uta_tables = NULL;
+  // mac->ops.enable_rx = ixgbe_enable_rx_generic;
+  // mac->ops.disable_rx = ixgbe_disable_rx_generic;
+
+  // /* Flow Control */
+  // mac->ops.fc_enable = ixgbe_fc_enable_generic;
+  // mac->ops.setup_fc = ixgbe_setup_fc_generic;
+  // mac->ops.fc_autoneg = ixgbe_fc_autoneg;
+
+  // /* Link */
+  // mac->ops.get_link_capabilities = NULL;
+  // mac->ops.setup_link = NULL;
+  // mac->ops.check_link = NULL;
+  // mac->ops.dmac_config = NULL;
+  // mac->ops.dmac_update_tcs = NULL;
+  // mac->ops.dmac_config_tcs = NULL;
+
+  return IXGBE_SUCCESS;
+}
+
+/**
+ *  ixgbe_init_phy_ops_generic - Inits PHY function ptrs
+ *  @hw: pointer to the hardware structure
+ *
+ *  Initialize the function pointers.
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_init_phy_ops_generic(struct ixgbe_hw* hw) {
+  struct ixgbe_phy_info* phy = &hw->phy;
+
+  DEBUGFUNC("ixgbe_init_phy_ops_generic\n");
+
+  /* PHY */
+  /*	phy->ops.identify = ixgbe_identify_phy_generic;
+          phy->ops.reset = ixgbe_reset_phy_generic;
+          phy->ops.read_reg = ixgbe_read_phy_reg_generic;
+          phy->ops.write_reg = ixgbe_write_phy_reg_generic;
+          phy->ops.read_reg_mdi = ixgbe_read_phy_reg_mdi;
+          phy->ops.write_reg_mdi = ixgbe_write_phy_reg_mdi;
+          phy->ops.setup_link = ixgbe_setup_phy_link_generic;
+          phy->ops.setup_link_speed = ixgbe_setup_phy_link_speed_generic;
+          phy->ops.check_link = NULL;
+          phy->ops.get_firmware_version =
+     ixgbe_get_phy_firmware_version_generic;
+          phy->ops.read_i2c_byte = ixgbe_read_i2c_byte_generic;
+          phy->ops.write_i2c_byte = ixgbe_write_i2c_byte_generic;
+          phy->ops.read_i2c_sff8472 = ixgbe_read_i2c_sff8472_generic;
+          phy->ops.read_i2c_eeprom = ixgbe_read_i2c_eeprom_generic;
+          phy->ops.write_i2c_eeprom = ixgbe_write_i2c_eeprom_generic;
+          phy->ops.i2c_bus_clear = ixgbe_i2c_bus_clear;
+          phy->ops.identify_sfp = ixgbe_identify_module_generic;
+          phy->sfp_type = ixgbe_sfp_type_unknown;
+          phy->ops.read_i2c_byte_unlocked =
+     ixgbe_read_i2c_byte_generic_unlocked;
+          phy->ops.write_i2c_byte_unlocked =
+                                  ixgbe_write_i2c_byte_generic_unlocked;
+          phy->ops.check_overtemp = ixgbe_tn_check_overtemp;*/
+  return IXGBE_SUCCESS;
+}
+
+/**
+ *  ixgbe_init_ops_82599 - Inits func ptrs and MAC type
+ *  @hw: pointer to hardware structure
+ *
+ *  Initialize the function pointers and assign the MAC type for 82599.
+ *  Does not touch the hardware.
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_init_ops_82599(struct ixgbe_hw* hw) {
+  struct ixgbe_mac_info* mac = &hw->mac;
+  struct ixgbe_phy_info* phy = &hw->phy;
+  struct ixgbe_eeprom_info* eeprom = &hw->eeprom;
+  s32 ret_val;
+
+  DEBUGFUNC("ixgbe_init_ops_82599\n");
+
+  ixgbe_init_phy_ops_generic(hw);
+  ret_val = ixgbe_init_ops_generic(hw);
+
+  // /* PHY */
+  // phy->ops.identify = ixgbe_identify_phy_82599;
+  // phy->ops.init = ixgbe_init_phy_ops_82599;
+
+  // /* MAC */
+  // mac->ops.reset_hw = ixgbe_reset_hw_82599;
+  // mac->ops.get_media_type = ixgbe_get_media_type_82599;
+  // mac->ops.get_supported_physical_layer =
+  // 			    ixgbe_get_supported_physical_layer_82599;
+  // mac->ops.disable_sec_rx_path = ixgbe_disable_sec_rx_path_generic;
+  // mac->ops.enable_sec_rx_path = ixgbe_enable_sec_rx_path_generic;
+  // mac->ops.enable_rx_dma = ixgbe_enable_rx_dma_82599;
+  // mac->ops.read_analog_reg8 = ixgbe_read_analog_reg8_82599;
+  // mac->ops.write_analog_reg8 = ixgbe_write_analog_reg8_82599;
+  // mac->ops.start_hw = ixgbe_start_hw_82599;
+  // mac->ops.get_san_mac_addr = ixgbe_get_san_mac_addr_generic;
+  // mac->ops.set_san_mac_addr = ixgbe_set_san_mac_addr_generic;
+  // mac->ops.get_device_caps = ixgbe_get_device_caps_generic;
+  // mac->ops.get_wwn_prefix = ixgbe_get_wwn_prefix_generic;
+  // mac->ops.get_fcoe_boot_status = ixgbe_get_fcoe_boot_status_generic;
+  // mac->ops.prot_autoc_read = prot_autoc_read_82599;
+  // mac->ops.prot_autoc_write = prot_autoc_write_82599;
+
+  // /* RAR, Multicast, VLAN */
+  // mac->ops.set_vmdq = ixgbe_set_vmdq_generic;
+  // mac->ops.set_vmdq_san_mac = ixgbe_set_vmdq_san_mac_generic;
+  // mac->ops.clear_vmdq = ixgbe_clear_vmdq_generic;
+  // mac->ops.insert_mac_addr = ixgbe_insert_mac_addr_generic;
+  // mac->rar_highwater = 1;
+  // mac->ops.set_vfta = ixgbe_set_vfta_generic;
+  // mac->ops.set_vlvf = ixgbe_set_vlvf_generic;
+  // mac->ops.clear_vfta = ixgbe_clear_vfta_generic;
+  // mac->ops.init_uta_tables = ixgbe_init_uta_tables_generic;
+  // mac->ops.setup_sfp = ixgbe_setup_sfp_modules_82599;
+  // mac->ops.set_mac_anti_spoofing = ixgbe_set_mac_anti_spoofing;
+  // mac->ops.set_vlan_anti_spoofing = ixgbe_set_vlan_anti_spoofing;
+
+  // /* Link */
+  // mac->ops.get_link_capabilities = ixgbe_get_link_capabilities_82599;
+  // mac->ops.check_link = ixgbe_check_mac_link_generic;
+  // mac->ops.setup_rxpba = ixgbe_set_rxpba_generic;
+  ixgbe_init_mac_link_ops_82599(hw);
+
+   mac->mcft_size		= IXGBE_82599_MC_TBL_SIZE;
+   mac->vft_size		= IXGBE_82599_VFT_TBL_SIZE;
+   mac->num_rar_entries	= IXGBE_82599_RAR_ENTRIES;
+   mac->rx_pb_size		= IXGBE_82599_RX_PB_SIZE;
+   mac->max_rx_queues	= IXGBE_82599_MAX_RX_QUEUES;
+   mac->max_tx_queues	= IXGBE_82599_MAX_TX_QUEUES;
+  // mac->max_msix_vectors	= ixgbe_get_pcie_msix_count_generic(hw);
+
+  // mac->arc_subsystem_valid = !!(IXGBE_READ_REG(hw, IXGBE_FWSM_BY_MAC(hw))
+  // 			      & IXGBE_FWSM_MODE_MASK);
+
+  // hw->mbx.ops.init_params = ixgbe_init_mbx_params_pf;
+
+  // /* EEPROM */
+  // eeprom->ops.read = ixgbe_read_eeprom_82599;
+  // eeprom->ops.read_buffer = ixgbe_read_eeprom_buffer_82599;
+
+  // /* Manageability interface */
+  // mac->ops.set_fw_drv_ver = ixgbe_set_fw_drv_ver_generic;
+
+  // mac->ops.get_thermal_sensor_data =
+  // 				 ixgbe_get_thermal_sensor_data_generic;
+  // mac->ops.init_thermal_sensor_thresh =
+  // 			      ixgbe_init_thermal_sensor_thresh_generic;
+
+  // mac->ops.get_rtrup2tc = ixgbe_dcb_get_rtrup2tc_generic;
+
+  return ret_val;
+}
+
+/**
+ * ixgbe_sw_init - Initialize general software structures (struct ixgbe_adapter)
+ * @adapter: board private structure to initialize
+ *
+ * ixgbe_sw_init initializes the Adapter private data structure.
+ * Fields are initialized based on PCI device information and
+ * OS network device settings (MTU size).
+ **/
+int ebbrt::IxgbeDriver::ixgbe_sw_init(struct ixgbe_hw* hw, pci::Device& dev) {
+  int err;
+  unsigned int fdir;
+  u32 fwsm;
+  u16 device_caps;
+
+  hw->revision_id = dev.GetVendorId();
+  if (hw->revision_id == IXGBE_FAILED_READ_CFG_BYTE) {
+    err = -1;
+    goto out;
+  }
+
+  hw->subsystem_vendor_id = dev.GetSubsystemVendorId();
+  hw->subsystem_device_id = dev.GetSubsystemDeviceId();
+  ebbrt::kprintf(
+      "revision_id = %x, subsystem_vendor_id = %x, subsystem_device_id = %x\n",
+      hw->revision_id, hw->subsystem_vendor_id, hw->subsystem_device_id);
+
+  err = ixgbe_init_ops_82599(hw);
+  hw->mac.max_link_up_time = IXGBE_LINK_UP_TIME;
+  if (err) {
+    DEBUGFUNC("init_ops failed: %d\n", err);
+    goto out;
+  }
+
+out:
+  return err;
+}
+
+void ebbrt::IxgbeDriver::ixgbe_disable_rx_generic(struct ixgbe_hw *hw)
+{
+    DEBUGFUNC("%s\n", __PRETTY_FUNCTION__);
+    
+	u32 pfdtxgswc;
+	u32 rxctrl;
+
+	rxctrl = IXGBE_READ_REG(hw, IXGBE_RXCTRL);
+	if (rxctrl & IXGBE_RXCTRL_RXEN) {
+		if (hw->mac.type != ixgbe_mac_82598EB) {
+			pfdtxgswc = IXGBE_READ_REG(hw, IXGBE_PFDTXGSWC);
+			if (pfdtxgswc & IXGBE_PFDTXGSWC_VT_LBEN) {
+				pfdtxgswc &= ~IXGBE_PFDTXGSWC_VT_LBEN;
+				IXGBE_WRITE_REG(hw, IXGBE_PFDTXGSWC, pfdtxgswc);
+				hw->mac.set_lben = true;
+			} else {
+				hw->mac.set_lben = false;
+			}
+		}
+		rxctrl &= ~IXGBE_RXCTRL_RXEN;
+		IXGBE_WRITE_REG(hw, IXGBE_RXCTRL, rxctrl);
+	}
+}
+
+/**
+ *  ixgbe_stop_adapter_generic - Generic stop Tx/Rx units
+ *  @hw: pointer to hardware structure
+ *
+ *  Sets the adapter_stopped flag within ixgbe_hw struct. Clears interrupts,
+ *  disables transmit and receive units. The adapter_stopped flag is used by
+ *  the shared code and drivers to determine if the adapter is in a stopped
+ *  state and should not touch the hardware.
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_stop_adapter_generic(struct ixgbe_hw *hw)
+{
+	u32 reg_val;
+	u16 i;
+
+	DEBUGFUNC("ixgbe_stop_adapter_generic\n");
+
+	/*
+	 * Set the adapter_stopped flag so other driver functions stop touching
+	 * the hardware
+	 */
+	hw->adapter_stopped = true;
+
+	/* Disable the receive unit */
+	ixgbe_disable_rx_generic(hw);
+
+	/* Clear interrupt mask to stop interrupts from being generated */
+	IXGBE_WRITE_REG(hw, IXGBE_EIMC, IXGBE_IRQ_CLEAR_MASK);
+
+	/* Clear any pending interrupts, flush previous writes */
+	IXGBE_READ_REG(hw, IXGBE_EICR);
+
+	/* Disable the transmit unit.  Each queue must be disabled. */
+	for (i = 0; i < hw->mac.max_tx_queues; i++)
+		IXGBE_WRITE_REG(hw, IXGBE_TXDCTL(i), IXGBE_TXDCTL_SWFLSH);
+
+	/* Disable the receive unit by stopping each queue */
+	for (i = 0; i < hw->mac.max_rx_queues; i++) {
+		reg_val = IXGBE_READ_REG(hw, IXGBE_RXDCTL(i));
+		reg_val &= ~IXGBE_RXDCTL_ENABLE;
+		reg_val |= IXGBE_RXDCTL_SWFLSH;
+		IXGBE_WRITE_REG(hw, IXGBE_RXDCTL(i), reg_val);
+	}
+
+	/* flush all queues disables */
+	IXGBE_WRITE_FLUSH(hw);
+	ebbrt::clock::SleepMilli(2);
+	//msec_delay(2);
+
+	/*
+	 * Prevent the PCI-E bus from hanging by disabling PCI-E master
+	 * access and verify no pending requests
+	 */
+	return ixgbe_disable_pcie_master(hw);
+}
+
+/**
+ * ixgbe_clear_tx_pending - Clear pending TX work from the PCIe fifo
+ * @hw: pointer to the hardware structure
+ *
+ * The 82599 and x540 MACs can experience issues if TX work is still pending
+ * when a reset occurs.  This function prevents this by flushing the PCIe
+ * buffers on the system.
+ **/
+void ebbrt::IxgbeDriver::ixgbe_clear_tx_pending(struct ixgbe_hw *hw)
+{
+	u32 gcr_ext, hlreg0, i, poll;
+	u16 value;
+
+	/*
+	 * If double reset is not requested then all transactions should
+	 * already be clear and as such there is no work to do
+	 */
+	if (!(hw->mac.flags & IXGBE_FLAGS_DOUBLE_RESET_REQUIRED))
+		return;
+
+	/*
+	 * Set loopback enable to prevent any transmits from being sent
+	 * should the link come up.  This assumes that the RXCTRL.RXEN bit
+	 * has already been cleared.
+	 */
+	hlreg0 = IXGBE_READ_REG(hw, IXGBE_HLREG0);
+	IXGBE_WRITE_REG(hw, IXGBE_HLREG0, hlreg0 | IXGBE_HLREG0_LPBK);
+
+	/* Wait for a last completion before clearing buffers */
+	IXGBE_WRITE_FLUSH(hw);
+	ebbrt::clock::SleepMilli(3);
+	//msec_delay(3);
+
+	/*
+	 * Before proceeding, make sure that the PCIe block does not have
+	 * transactions pending.
+	 */
+	// poll = ixgbe_pcie_timeout_poll(hw);
+	// for (i = 0; i < poll; i++) {
+	// 	usec_delay(100);
+	// 	value = IXGBE_READ_PCIE_WORD(hw, IXGBE_PCI_DEVICE_STATUS);
+	// 	if (IXGBE_REMOVED(hw->hw_addr))
+	// 		goto out;
+	// 	if (!(value & IXGBE_PCI_DEVICE_STATUS_TRANSACTION_PENDING))
+	// 		goto out;
+	// }
+
+out:
+	/* initiate cleaning flow for buffers in the PCIe transaction layer */
+	gcr_ext = IXGBE_READ_REG(hw, IXGBE_GCR_EXT);
+	IXGBE_WRITE_REG(hw, IXGBE_GCR_EXT,
+			gcr_ext | IXGBE_GCR_EXT_BUFFERS_CLEAR);
+
+	/* Flush all writes and allow 20usec for all transactions to clear */
+	IXGBE_WRITE_FLUSH(hw);
+	ebbrt::clock::SleepMilli(1);
+	//usec_delay(20);
+
+	/* restore previous register values */
+	IXGBE_WRITE_REG(hw, IXGBE_GCR_EXT, gcr_ext);
+	IXGBE_WRITE_REG(hw, IXGBE_HLREG0, hlreg0);
+}
+
+/**
+ *  ixgbe_read_phy_mdi - Reads a value from a specified PHY register without
+ *  the SWFW lock
+ *  @hw: pointer to hardware structure
+ *  @reg_addr: 32 bit address of PHY register to read
+ *  @phy_data: Pointer to read data from PHY register
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_read_phy_reg_mdi(struct ixgbe_hw *hw, u32 reg_addr, u32 device_type,
+					       u16 *phy_data)
+{
+	u32 i, data, command;
+
+	/* Setup and write the address cycle command */
+	command = ((reg_addr << IXGBE_MSCA_NP_ADDR_SHIFT)  |
+		   (device_type << IXGBE_MSCA_DEV_TYPE_SHIFT) |
+		   (hw->phy.addr << IXGBE_MSCA_PHY_ADDR_SHIFT) |
+		   (IXGBE_MSCA_ADDR_CYCLE | IXGBE_MSCA_MDI_COMMAND));
+
+	IXGBE_WRITE_REG(hw, IXGBE_MSCA, command);
+
+	/*
+	 * Check every 10 usec to see if the address cycle completed.
+	 * The MDI Command bit will clear when the operation is
+	 * complete
+	 */
+	for (i = 0; i < IXGBE_MDIO_COMMAND_TIMEOUT; i++) {
+	    //usec_delay(10);
+	    ebbrt::clock::SleepMicro(10);
+		command = IXGBE_READ_REG(hw, IXGBE_MSCA);
+		if ((command & IXGBE_MSCA_MDI_COMMAND) == 0)
+				break;
+	}
+
+
+	if ((command & IXGBE_MSCA_MDI_COMMAND) != 0) {
+	    ebbrt::kabort("PHY address command did not complete.\n");
+	    return IXGBE_ERR_PHY;
+	}
+
+	/*
+	 * Address cycle complete, setup and write the read
+	 * command
+	 */
+	command = ((reg_addr << IXGBE_MSCA_NP_ADDR_SHIFT)  |
+		   (device_type << IXGBE_MSCA_DEV_TYPE_SHIFT) |
+		   (hw->phy.addr << IXGBE_MSCA_PHY_ADDR_SHIFT) |
+		   (IXGBE_MSCA_READ | IXGBE_MSCA_MDI_COMMAND));
+
+	IXGBE_WRITE_REG(hw, IXGBE_MSCA, command);
+
+	/*
+	 * Check every 10 usec to see if the address cycle
+	 * completed. The MDI Command bit will clear when the
+	 * operation is complete
+	 */
+	for (i = 0; i < IXGBE_MDIO_COMMAND_TIMEOUT; i++) {
+	    //usec_delay(10);
+		ebbrt::clock::SleepMicro(10);
+		command = IXGBE_READ_REG(hw, IXGBE_MSCA);
+		if ((command & IXGBE_MSCA_MDI_COMMAND) == 0)
+			break;
+	}
+
+	if ((command & IXGBE_MSCA_MDI_COMMAND) != 0) {
+	    ebbrt::kabort("PHY read command didn't complete\n");
+		return IXGBE_ERR_PHY;
+	}
+
+	/*
+	 * Read operation is complete.  Get the data
+	 * from MSRWD
+	 */
+	data = IXGBE_READ_REG(hw, IXGBE_MSRWD);
+	data >>= IXGBE_MSRWD_READ_DATA_SHIFT;
+	*phy_data = (u16)(data);
+
+	return IXGBE_SUCCESS;
+}
+
+/**
+ *  ixgbe_read_phy_reg_generic - Reads a value from a specified PHY register
+ *  using the SWFW lock - this function is needed in most cases
+ *  @hw: pointer to hardware structure
+ *  @reg_addr: 32 bit address of PHY register to read
+ *  @phy_data: Pointer to read data from PHY register
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_read_phy_reg_generic(struct ixgbe_hw *hw, u32 reg_addr,
+			       u32 device_type, u16 *phy_data)
+{
+	s32 status;
+	u32 gssr = hw->phy.phy_semaphore_mask;
+
+	DEBUGFUNC("ixgbe_read_phy_reg_generic\n");
+
+	//if (hw->mac.ops.acquire_swfw_sync(hw, gssr))
+	//	return IXGBE_ERR_SWFW_SYNC;
+
+	status = ixgbe_read_phy_reg_mdi(hw, reg_addr, device_type, phy_data);
+	//status = hw->phy.ops.read_reg_mdi(hw, reg_addr, device_type, phy_data);
+
+	//hw->mac.ops.release_swfw_sync(hw, gssr);
+
+	return status;
+}
+
+/**
+ *  ixgbe_validate_phy_addr - Determines phy address is valid
+ *  @hw: pointer to hardware structure
+ *
+ **/
+bool ebbrt::IxgbeDriver::ixgbe_validate_phy_addr(struct ixgbe_hw *hw, u32 phy_addr)
+{
+	u16 phy_id = 0;
+	bool valid = false;
+
+	DEBUGFUNC("ixgbe_validate_phy_addr\n");
+
+	hw->phy.addr = phy_addr;
+	//hw->phy.ops.read_reg(hw, IXGBE_MDIO_PHY_ID_HIGH,
+	//		     IXGBE_MDIO_PMA_PMD_DEV_TYPE, &phy_id);
+	ixgbe_read_phy_reg_generic(hw, IXGBE_MDIO_PHY_ID_HIGH,
+				   IXGBE_MDIO_PMA_PMD_DEV_TYPE, &phy_id);
+
+	if (phy_id != 0xFFFF && phy_id != 0x0)
+		valid = true;
+
+	return valid;
+}
+
+/**
+ *  ixgbe_get_phy_id - Get the phy type
+ *  @hw: pointer to hardware structure
+ *
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_get_phy_id(struct ixgbe_hw *hw)
+{
+	u32 status;
+	u16 phy_id_high = 0;
+	u16 phy_id_low = 0;
+
+	DEBUGFUNC("ixgbe_get_phy_id");
+
+	//status = hw->phy.ops.read_reg(hw, IXGBE_MDIO_PHY_ID_HIGH,
+	status = ixgbe_read_phy_reg_generic(hw, IXGBE_MDIO_PHY_ID_HIGH,
+				      IXGBE_MDIO_PMA_PMD_DEV_TYPE,
+				      &phy_id_high);
+
+	if (status == IXGBE_SUCCESS) {
+		hw->phy.id = (u32)(phy_id_high << 16);
+		//status = hw->phy.ops.read_reg(hw, IXGBE_MDIO_PHY_ID_LOW,
+		status = ixgbe_read_phy_reg_generic(hw, IXGBE_MDIO_PHY_ID_LOW,
+					      IXGBE_MDIO_PMA_PMD_DEV_TYPE,
+					      &phy_id_low);
+		hw->phy.id |= (u32)(phy_id_low & IXGBE_PHY_REVISION_MASK);
+		hw->phy.revision = (u32)(phy_id_low & ~IXGBE_PHY_REVISION_MASK);
+	}
+	return status;
+}
+
+/**
+ *  ixgbe_get_phy_type_from_id - Get the phy type
+ *  @phy_id: PHY ID information
+ *
+ **/
+enum ixgbe_phy_type ebbrt::IxgbeDriver::ixgbe_get_phy_type_from_id(u32 phy_id)
+{
+	enum ixgbe_phy_type phy_type;
+
+	DEBUGFUNC("ixgbe_get_phy_type_from_id\n");
+
+	switch (phy_id) {
+	case TN1010_PHY_ID:
+		phy_type = ixgbe_phy_tn;
+		break;
+	case X550_PHY_ID1:
+	case X550_PHY_ID2:
+	case X550_PHY_ID3:
+	case X540_PHY_ID:
+		phy_type = ixgbe_phy_aq;
+		break;
+	case QT2022_PHY_ID:
+		phy_type = ixgbe_phy_qt;
+		break;
+	case ATH_PHY_ID:
+		phy_type = ixgbe_phy_nl;
+		break;
+	case X557_PHY_ID:
+		phy_type = ixgbe_phy_x550em_ext_t;
+		break;
+	default:
+		phy_type = ixgbe_phy_unknown;
+		break;
+	}
+	return phy_type;
+}
+
+/**
+ * ixgbe_probe_phy - Probe a single address for a PHY
+ * @hw: pointer to hardware structure
+ * @phy_addr: PHY address to probe
+ *
+ * Returns true if PHY found
+ */
+bool ebbrt::IxgbeDriver::ixgbe_probe_phy(struct ixgbe_hw *hw, u16 phy_addr)
+{
+	u16 ext_ability = 0;
+
+	if (!ixgbe_validate_phy_addr(hw, phy_addr))
+		return false;
+
+	if (ixgbe_get_phy_id(hw))
+	    return false;
+
+	hw->phy.type = ixgbe_get_phy_type_from_id(hw->phy.id);
+
+	 if (hw->phy.type == ixgbe_phy_unknown) {
+	     //hw->phy.ops.read_reg(hw, IXGBE_MDIO_PHY_EXT_ABILITY,
+	     ixgbe_read_phy_reg_generic(hw, IXGBE_MDIO_PHY_EXT_ABILITY,
+					IXGBE_MDIO_PMA_PMD_DEV_TYPE, &ext_ability);
+	 	if (ext_ability &
+	 	    (IXGBE_MDIO_PHY_10GBASET_ABILITY |
+	 	     IXGBE_MDIO_PHY_1000BASET_ABILITY))
+	 		hw->phy.type = ixgbe_phy_cu_unknown;
+	 	else
+	 		hw->phy.type = ixgbe_phy_generic;
+	 }
+
+	return true;
+}
+
+/**
+ *  ixgbe_identify_phy_generic - Get physical layer module
+ *  @hw: pointer to hardware structure
+ *
+ *  Determines the physical layer module found on the current adapter.
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_identify_phy_generic(struct ixgbe_hw *hw)
+{
+	s32 status = IXGBE_ERR_PHY_ADDR_INVALID;
+	u16 phy_addr;
+
+	DEBUGFUNC("ixgbe_identify_phy_generic\n");
+
+	if (!hw->phy.phy_semaphore_mask) {
+		if (hw->bus.lan_id)
+			hw->phy.phy_semaphore_mask = IXGBE_GSSR_PHY1_SM;
+		else
+			hw->phy.phy_semaphore_mask = IXGBE_GSSR_PHY0_SM;
+	}
+
+	if (hw->phy.type != ixgbe_phy_unknown)
+		return IXGBE_SUCCESS;
+
+	for (phy_addr = 0; phy_addr < IXGBE_MAX_PHY_ADDR; phy_addr++) {
+		if (ixgbe_probe_phy(hw, phy_addr)) {
+			status = IXGBE_SUCCESS;
+			break;
+		}
+	}
+
+	/* Certain media types do not have a phy so an address will not
+	 * be found and the code will take this path.  Caller has to
+	 * decide if it is an error or not.
+	 */
+	if (status != IXGBE_SUCCESS)
+		hw->phy.addr = 0;
+
+	return status;
+}
+
+/**
+ *  ixgbe_identify_phy_82599 - Get physical layer module
+ *  @hw: pointer to hardware structure
+ *
+ *  Determines the physical layer module found on the current adapter.
+ *  If PHY already detected, maintains current PHY type in hw struct,
+ *  otherwise executes the PHY detection routine.
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_identify_phy_82599(struct ixgbe_hw *hw)
+{
+	s32 status;
+
+	DEBUGFUNC("ixgbe_identify_phy_82599\n");
+
+	/* Detect PHY if not unknown - returns success if already detected. */
+	status = ixgbe_identify_phy_generic(hw);
+	if (status != IXGBE_SUCCESS) {
+	    /* 82599 10GBASE-T requires an external PHY */
+	    if (ixgbe_get_media_type_82599(hw) == ixgbe_media_type_copper)
+		return status;
+	    else
+		status = ixgbe_identify_module_generic(hw);
+	}
+	
+	// /* Set PHY type none if no PHY detected */
+	// if (hw->phy.type == ixgbe_phy_unknown) {
+	// 	hw->phy.type = ixgbe_phy_none;
+	// 	return IXGBE_SUCCESS;
+	// }
+
+	// /* Return error if SFP module has been detected but is not supported */
+	// if (hw->phy.type == ixgbe_phy_sfp_unsupported)
+	// 	return IXGBE_ERR_SFP_NOT_SUPPORTED;
+
+	// return status;
+}
+
+/**
+ *  ixgbe_init_phy_ops_82599 - PHY/SFP specific init
+ *  @hw: pointer to hardware structure
+ *
+ *  Initialize any function pointers that were not able to be
+ *  set during init_shared_code because the PHY/SFP type was
+ *  not known.  Perform the SFP init if necessary.
+ *
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_init_phy_ops_82599(struct ixgbe_hw *hw)
+{
+	struct ixgbe_mac_info *mac = &hw->mac;
+	struct ixgbe_phy_info *phy = &hw->phy;
+	s32 ret_val = IXGBE_SUCCESS;
+	u32 esdp;
+
+	DEBUGFUNC("ixgbe_init_phy_ops_82599\n");
+
+	if (hw->device_id == IXGBE_DEV_ID_82599_QSFP_SF_QP) {
+	    ebbrt::kabort("hw->device_id == IXGBE_DEV_ID_82599_QSFP_SF_QP\n");
+	}
+	
+	/* Identify the PHY or SFP module */
+	ret_val = ixgbe_identify_phy_82599(hw);
+	//ret_val = phy->ops.identify(hw);
+
+	// if (ret_val == IXGBE_ERR_SFP_NOT_SUPPORTED)
+	// 	goto init_phy_ops_out;
+
+	// /* Setup function pointers based on detected SFP module and speeds */
+	// ixgbe_init_mac_link_ops_82599(hw);
+	// if (hw->phy.sfp_type != ixgbe_sfp_type_unknown)
+	// 	hw->phy.ops.reset = NULL;
+
+	// /* If copper media, overwrite with copper function pointers */
+	// if (mac->ops.get_media_type(hw) == ixgbe_media_type_copper) {
+	// 	mac->ops.setup_link = ixgbe_setup_copper_link_82599;
+	// 	mac->ops.get_link_capabilities =
+	// 			  ixgbe_get_copper_link_capabilities_generic;
+	// }
+
+	// /* Set necessary function pointers based on PHY type */
+	// switch (hw->phy.type) {
+	// case ixgbe_phy_tn:
+	// 	phy->ops.setup_link = ixgbe_setup_phy_link_tnx;
+	// 	phy->ops.check_link = ixgbe_check_phy_link_tnx;
+	// 	phy->ops.get_firmware_version =
+	// 		     ixgbe_get_phy_firmware_version_tnx;
+	// 	break;
+	// default:
+	// 	break;
+	// }
+init_phy_ops_out:
+	return ret_val;
+}
+
+/**
+ *  ixgbe_reset_hw_82599 - Perform hardware reset
+ *  @hw: pointer to hardware structure
+ *
+ *  Resets the hardware by resetting the transmit and receive units, masks
+ *  and clears all interrupts, perform a PHY reset, and perform a link (MAC)
+ *  reset.
+ **/
+s32 ebbrt::IxgbeDriver::ixgbe_reset_hw_82599(struct ixgbe_hw *hw)
+{
+	ixgbe_link_speed link_speed;
+	s32 status;
+	u32 ctrl = 0;
+	u32 i, autoc, autoc2;
+	u32 curr_lms;
+	bool link_up = false;
+
+	DEBUGFUNC("ixgbe_reset_hw_82599\n");
+
+	/* Call adapter stop to disable tx/rx and clear interrupts */
+	//status = hw->mac.ops.stop_adapter(hw);
+	status = ixgbe_stop_adapter_generic(hw);
+	if (status != IXGBE_SUCCESS) {
+	    ebbrt::kabort("ixgbe_stop_adapter_generic failed\n");
+		goto reset_hw_out;
+	}
+
+	// /* flush pending Tx transactions */
+ 	ixgbe_clear_tx_pending(hw);
+
+ 	/* PHY ops must be identified and initialized prior to reset */
+
+ 	/* Identify PHY and related function pointers */
+	status = ixgbe_init_phy_ops_82599(hw);
+ 	//status = hw->phy.ops.init(hw);
+
+// 	if (status == IXGBE_ERR_SFP_NOT_SUPPORTED)
+// 		goto reset_hw_out;
+
+// 	/* Setup SFP module if there is one present. */
+// 	if (hw->phy.sfp_setup_needed) {
+// 		status = hw->mac.ops.setup_sfp(hw);
+// 		hw->phy.sfp_setup_needed = false;
+// 	}
+
+// 	if (status == IXGBE_ERR_SFP_NOT_SUPPORTED)
+// 		goto reset_hw_out;
+
+// 	/* Reset PHY */
+// 	if (hw->phy.reset_disable == false && hw->phy.ops.reset != NULL)
+// 		hw->phy.ops.reset(hw);
+
+// 	/* remember AUTOC from before we reset */
+// 	curr_lms = IXGBE_READ_REG(hw, IXGBE_AUTOC) & IXGBE_AUTOC_LMS_MASK;
+
+// mac_reset_top:
+// 	/*
+// 	 * Issue global reset to the MAC.  Needs to be SW reset if link is up.
+// 	 * If link reset is used when link is up, it might reset the PHY when
+// 	 * mng is using it.  If link is down or the flag to force full link
+// 	 * reset is set, then perform link reset.
+// 	 */
+// 	ctrl = IXGBE_CTRL_LNK_RST;
+// 	if (!hw->force_full_reset) {
+// 		hw->mac.ops.check_link(hw, &link_speed, &link_up, false);
+// 		if (link_up)
+// 			ctrl = IXGBE_CTRL_RST;
+// 	}
+
+// 	ctrl |= IXGBE_READ_REG(hw, IXGBE_CTRL);
+// 	IXGBE_WRITE_REG(hw, IXGBE_CTRL, ctrl);
+// 	IXGBE_WRITE_FLUSH(hw);
+
+// 	/* Poll for reset bit to self-clear meaning reset is complete */
+// 	for (i = 0; i < 10; i++) {
+// 		usec_delay(1);
+// 		ctrl = IXGBE_READ_REG(hw, IXGBE_CTRL);
+// 		if (!(ctrl & IXGBE_CTRL_RST_MASK))
+// 			break;
+// 	}
+
+// 	if (ctrl & IXGBE_CTRL_RST_MASK) {
+// 		status = IXGBE_ERR_RESET_FAILED;
+// 		DEBUGOUT("Reset polling failed to complete.\n");
+// 	}
+
+// 	msec_delay(50);
+
+// 	/*
+// 	 * Double resets are required for recovery from certain error
+// 	 * conditions.  Between resets, it is necessary to stall to
+// 	 * allow time for any pending HW events to complete.
+// 	 */
+// 	if (hw->mac.flags & IXGBE_FLAGS_DOUBLE_RESET_REQUIRED) {
+// 		hw->mac.flags &= ~IXGBE_FLAGS_DOUBLE_RESET_REQUIRED;
+// 		goto mac_reset_top;
+// 	}
+
+// 	/*
+// 	 * Store the original AUTOC/AUTOC2 values if they have not been
+// 	 * stored off yet.  Otherwise restore the stored original
+// 	 * values since the reset operation sets back to defaults.
+// 	 */
+// 	autoc = IXGBE_READ_REG(hw, IXGBE_AUTOC);
+// 	autoc2 = IXGBE_READ_REG(hw, IXGBE_AUTOC2);
+
+// 	/* Enable link if disabled in NVM */
+// 	if (autoc2 & IXGBE_AUTOC2_LINK_DISABLE_MASK) {
+// 		autoc2 &= ~IXGBE_AUTOC2_LINK_DISABLE_MASK;
+// 		IXGBE_WRITE_REG(hw, IXGBE_AUTOC2, autoc2);
+// 		IXGBE_WRITE_FLUSH(hw);
+// 	}
+
+// 	if (hw->mac.orig_link_settings_stored == false) {
+// 		hw->mac.orig_autoc = autoc;
+// 		hw->mac.orig_autoc2 = autoc2;
+// 		hw->mac.orig_link_settings_stored = true;
+// 	} else {
+
+// 		/* If MNG FW is running on a multi-speed device that
+// 		 * doesn't autoneg with out driver support we need to
+// 		 * leave LMS in the state it was before we MAC reset.
+// 		 * Likewise if we support WoL we don't want change the
+// 		 * LMS state.
+// 		 */
+// 		if ((hw->phy.multispeed_fiber && ixgbe_mng_enabled(hw)) ||
+// 		    hw->wol_enabled)
+// 			hw->mac.orig_autoc =
+// 				(hw->mac.orig_autoc & ~IXGBE_AUTOC_LMS_MASK) |
+// 				curr_lms;
+
+// 		if (autoc != hw->mac.orig_autoc) {
+// 			status = hw->mac.ops.prot_autoc_write(hw,
+// 							hw->mac.orig_autoc,
+// 							false);
+// 			if (status != IXGBE_SUCCESS)
+// 				goto reset_hw_out;
+// 		}
+
+// 		if ((autoc2 & IXGBE_AUTOC2_UPPER_MASK) !=
+// 		    (hw->mac.orig_autoc2 & IXGBE_AUTOC2_UPPER_MASK)) {
+// 			autoc2 &= ~IXGBE_AUTOC2_UPPER_MASK;
+// 			autoc2 |= (hw->mac.orig_autoc2 &
+// 				   IXGBE_AUTOC2_UPPER_MASK);
+// 			IXGBE_WRITE_REG(hw, IXGBE_AUTOC2, autoc2);
+// 		}
+// 	}
+
+// 	/* Store the permanent mac address */
+// 	hw->mac.ops.get_mac_addr(hw, hw->mac.perm_addr);
+
+// 	/*
+// 	 * Store MAC address from RAR0, clear receive address registers, and
+// 	 * clear the multicast table.  Also reset num_rar_entries to 128,
+// 	 * since we modify this value when programming the SAN MAC address.
+// 	 */
+// 	hw->mac.num_rar_entries = 128;
+// 	hw->mac.ops.init_rx_addrs(hw);
+
+// 	/* Store the permanent SAN mac address */
+// 	hw->mac.ops.get_san_mac_addr(hw, hw->mac.san_addr);
+
+// 	/* Add the SAN MAC address to the RAR only if it's a valid address */
+// 	if (ixgbe_validate_mac_addr(hw->mac.san_addr) == 0) {
+// 		/* Save the SAN MAC RAR index */
+// 		hw->mac.san_mac_rar_index = hw->mac.num_rar_entries - 1;
+
+// 		hw->mac.ops.set_rar(hw, hw->mac.san_mac_rar_index,
+// 				    hw->mac.san_addr, 0, IXGBE_RAH_AV);
+
+// 		/* clear VMDq pool/queue selection for this RAR */
+// 		hw->mac.ops.clear_vmdq(hw, hw->mac.san_mac_rar_index,
+// 				       IXGBE_CLEAR_VMDQ_ALL);
+
+// 		/* Reserve the last RAR for the SAN MAC address */
+// 		hw->mac.num_rar_entries--;
+// 	}
+
+// 	/* Store the alternative WWNN/WWPN prefix */
+// 	hw->mac.ops.get_wwn_prefix(hw, &hw->mac.wwnn_prefix,
+// 				   &hw->mac.wwpn_prefix);
+
+reset_hw_out:
+	return status;
+}
+
+void ebbrt::IxgbeDriver::ixgbe_probe(pci::Device& dev) {
+  struct ixgbe_hw* hw = NULL;
+  struct net_device* netdev;
+  struct ixgbe_adapter* adapter = NULL;
+  static int cards_found;
+  int err, pci_using_dac, expected_gts;
+  u16 offset = 0;
+  u16 eeprom_verh = 0, eeprom_verl = 0;
+  u16 eeprom_cfg_blkh = 0, eeprom_cfg_blkl = 0;
+  u32 etrack_id;
+  u16 build, major, patch;
+  char *info_string, *i_s_var;
+  u8 part_str[IXGBE_PBANUM_LENGTH];
+  enum ixgbe_mac_type mac_type = ixgbe_mac_unknown;
+  bool disable_dev = false;
+  u32 hw_features;
+
+  bar0_.Map();  // allocate virtual memory
+
+  hw = (struct ixgbe_hw*)malloc(sizeof(struct ixgbe_hw));
+  if (hw == NULL) {
+    ebbrt::kabort("Unable to malloc struct ixgbe_hw\n");
+  } else {
+    hw->vendor_id = kIxgbeVendorId;
+    hw->device_id = kIxgbeDeviceId;
+    ixgbe_set_mac_type(hw);
+    mac_type = hw->mac.type;
+  }
+
+  /* setup the private structure */
+  err = ixgbe_sw_init(hw, dev);
+  if (err)
+    goto err_sw_init;
+
+  /* Make it possible the adapter to be woken up via WOL */
+  IXGBE_WRITE_REG(hw, IXGBE_WUS, ~0);
+
+  /* reset_hw fills in the perm_addr as well */
+  hw->phy.reset_if_overtemp = true;
+  //err = hw->mac.ops.reset_hw(hw);
+  err = ixgbe_reset_hw_82599(hw);
+  hw->phy.reset_if_overtemp = false;
+  if (err == IXGBE_ERR_SFP_NOT_PRESENT) {
+      err = IXGBE_SUCCESS;
+  } else if (err == IXGBE_ERR_SFP_NOT_SUPPORTED) {
+      ebbrt::kprintf("failed to load because an unsupported SFP+ or QSFP "
+		     "module type was detected.\n");
+      ebbrt::kprintf("Reload the driver after installing a supported "
+		"module.\n");
+      goto err_sw_init;
+  } else if (err) {
+      ebbrt::kprintf("HW Init failed: %d\n", err);
+      goto err_sw_init;
+  }
+  
+err_sw_init:
+  return;
 }
 
 void ebbrt::IxgbeDriver::SendPacket(uint32_t n) {
@@ -82,17 +1385,20 @@ void ebbrt::IxgbeDriver::SendPacket(uint32_t n) {
   ixgq->tx_ring[tail].length = 60;
   ixgq->tx_ring[tail].eop = 1;
   ixgq->tx_ring[tail].rs = 1;
-  
-  ebbrt::kprintf("taddr - %p %p len:%d\n", txbuf, ixgq->tx_ring[tail].buffer_address, ixgq->tx_ring[tail].length);
-  
+
+  ebbrt::kprintf("taddr - %p %p len:%d\n", txbuf,
+                 ixgq->tx_ring[tail].buffer_address,
+                 ixgq->tx_ring[tail].length);
+
   // bump tx_tail
   ixgq->tx_tail = (tail + 1) % ixgq->tx_size;
   WriteTdt(n, ixgq->tx_tail);
-  ebbrt::kprintf("bump tail: tx_head = %d tx_tail = %d", ixgq->tx_head, ixgq->tx_tail);
+  ebbrt::kprintf("bump tail: tx_head = %d tx_tail = %d", ixgq->tx_head,
+                 ixgq->tx_tail);
 
   auto head = ixgq->tx_head;
   std::atomic_thread_fence(std::memory_order_release);
-  while(ixgq->tx_ring[head].dd == 0){
+  while (ixgq->tx_ring[head].dd == 0) {
   }
 
   ebbrt::kprintf("TX dma complete\n");
@@ -167,98 +1473,97 @@ void ebbrt::IxgbeDriver::ProcessPacket(uint32_t n) {
 }
 
 void ebbrt::IxgbeDriver::InitStruct() {
-  struct IxgbeRegs* r = static_cast<struct IxgbeRegs*>(bar0_.GetVaddr());
+  /*struct IxgbeRegs* r = static_cast<struct IxgbeRegs*>(bar0_.GetVaddr());
 
-  ebbrt::kprintf(
-      "0x00000: CTRL        (Device Control)                 0x%08X\n",
-      r->kIxgbeCtrl);
+ebbrt::kprintf(
+    "0x00000: CTRL        (Device Control)                 0x%08X\n",
+    r->kIxgbeCtrl);
 
-  ebbrt::kprintf(
-      "0x00008: STATUS      (Device Status)                  0x%08X\n",
-      r->kIxgbeStatus);
+ebbrt::kprintf(
+    "0x00008: STATUS      (Device Status)                  0x%08X\n",
+    r->kIxgbeStatus);*/
 }
 
 void ebbrt::IxgbeDriver::DeviceInfo() {
-  uint32_t reg;
+  /*uint32_t reg;
 
-  reg = bar0_.Read32(0x042A4);
-  ebbrt::kprintf(
-      "0x042A4: LINKS (Link Status register)                 0x%08X\n"
-      "       Link Status:                                   %s\n"
-      "       Link Speed:                                    %s\n",
-      reg, reg & IXGBE_LINKS_UP ? "up" : "down",
-      reg & IXGBE_LINKS_SPEED ? "10G" : "1G");
+reg = bar0_.Read32(0x042A4);
+ebbrt::kprintf(
+    "0x042A4: LINKS (Link Status register)                 0x%08X\n"
+    "       Link Status:                                   %s\n"
+    "       Link Speed:                                    %s\n",
+    reg, reg & IXGBE_LINKS_UP ? "up" : "down",
+    reg & IXGBE_LINKS_SPEED ? "10G" : "1G");
 
-  reg = bar0_.Read32(0x05080);
-  ebbrt::kprintf(
-      "0x05080: FCTRL (Filter Control register)              0x%08X\n"
-      "       Broadcast Accept:                              %s\n"
-      "       Unicast Promiscuous:                           %s\n"
-      "       Multicast Promiscuous:                         %s\n"
-      "       Store Bad Packets:                             %s\n",
-      reg, reg & IXGBE_FCTRL_BAM ? "enabled" : "disabled",
-      reg & IXGBE_FCTRL_UPE ? "enabled" : "disabled",
-      reg & IXGBE_FCTRL_MPE ? "enabled" : "disabled",
-      reg & IXGBE_FCTRL_SBP ? "enabled" : "disabled");
+reg = bar0_.Read32(0x05080);
+ebbrt::kprintf(
+    "0x05080: FCTRL (Filter Control register)              0x%08X\n"
+    "       Broadcast Accept:                              %s\n"
+    "       Unicast Promiscuous:                           %s\n"
+    "       Multicast Promiscuous:                         %s\n"
+    "       Store Bad Packets:                             %s\n",
+    reg, reg & IXGBE_FCTRL_BAM ? "enabled" : "disabled",
+    reg & IXGBE_FCTRL_UPE ? "enabled" : "disabled",
+    reg & IXGBE_FCTRL_MPE ? "enabled" : "disabled",
+    reg & IXGBE_FCTRL_SBP ? "enabled" : "disabled");
 
-  reg = bar0_.Read32(0x04294);
-  ebbrt::kprintf(
-      "0x04294: MFLCN (TabMAC Flow Control register)         0x%08X\n"
-      "       Receive Flow Control Packets:                  %s\n"
-      "       Discard Pause Frames:                          %s\n"
-      "       Pass MAC Control Frames:                       %s\n"
-      "       Receive Priority Flow Control Packets:         %s\n",
-      reg, reg & IXGBE_MFLCN_RFCE ? "enabled" : "disabled",
-      reg & IXGBE_FCTRL_DPF ? "enabled" : "disabled",
-      reg & IXGBE_FCTRL_PMCF ? "enabled" : "disabled",
-      reg & IXGBE_FCTRL_RPFCE ? "enabled" : "disabled");
+reg = bar0_.Read32(0x04294);
+ebbrt::kprintf(
+    "0x04294: MFLCN (TabMAC Flow Control register)         0x%08X\n"
+    "       Receive Flow Control Packets:                  %s\n"
+    "       Discard Pause Frames:                          %s\n"
+    "       Pass MAC Control Frames:                       %s\n"
+    "       Receive Priority Flow Control Packets:         %s\n",
+    reg, reg & IXGBE_MFLCN_RFCE ? "enabled" : "disabled",
+    reg & IXGBE_FCTRL_DPF ? "enabled" : "disabled",
+    reg & IXGBE_FCTRL_PMCF ? "enabled" : "disabled",
+    reg & IXGBE_FCTRL_RPFCE ? "enabled" : "disabled");
 
-  reg = bar0_.Read32(0x05088);
-  ebbrt::kprintf(
-      "0x05088: VLNCTRL (VLAN Control register)              0x%08X\n"
-      "       VLAN Mode:                                     %s\n"
-      "       VLAN Filter:                                   %s\n",
-      reg, reg & IXGBE_VLNCTRL_VME ? "enabled" : "disabled",
-      reg & IXGBE_VLNCTRL_VFE ? "enabled" : "disabled");
+reg = bar0_.Read32(0x05088);
+ebbrt::kprintf(
+    "0x05088: VLNCTRL (VLAN Control register)              0x%08X\n"
+    "       VLAN Mode:                                     %s\n"
+    "       VLAN Filter:                                   %s\n",
+    reg, reg & IXGBE_VLNCTRL_VME ? "enabled" : "disabled",
+    reg & IXGBE_VLNCTRL_VFE ? "enabled" : "disabled");
 
-  reg = bar0_.Read32(0x02100);
-  ebbrt::kprintf(
-      "0x02100: SRRCTL0 (Split and Replic Rx Control 0)      0x%08X\n"
-      "       Receive Buffer Size:                           %uKB\n",
-      reg, (reg & IXGBE_SRRCTL_BSIZEPKT_MASK) <= 0x10
-               ? (reg & IXGBE_SRRCTL_BSIZEPKT_MASK)
-               : 0x10);
+reg = bar0_.Read32(0x02100);
+ebbrt::kprintf(
+    "0x02100: SRRCTL0 (Split and Replic Rx Control 0)      0x%08X\n"
+    "       Receive Buffer Size:                           %uKB\n",
+    reg, (reg & IXGBE_SRRCTL_BSIZEPKT_MASK) <= 0x10
+             ? (reg & IXGBE_SRRCTL_BSIZEPKT_MASK)
+             : 0x10);
 
-  reg = bar0_.Read32(0x03D00);
-  ebbrt::kprintf(
-      "0x03D00: FCCFG (Flow Control Configuration)           0x%08X\n"
-      "       Transmit Flow Control:                         %s\n"
-      "       Priority Flow Control:                         %s\n",
-      reg, reg & IXGBE_FCCFG_TFCE_802_3X ? "enabled" : "disabled",
-      reg & IXGBE_FCCFG_TFCE_PRIORITY ? "enabled" : "disabled");
+reg = bar0_.Read32(0x03D00);
+ebbrt::kprintf(
+    "0x03D00: FCCFG (Flow Control Configuration)           0x%08X\n"
+    "       Transmit Flow Control:                         %s\n"
+    "       Priority Flow Control:                         %s\n",
+    reg, reg & IXGBE_FCCFG_TFCE_802_3X ? "enabled" : "disabled",
+    reg & IXGBE_FCCFG_TFCE_PRIORITY ? "enabled" : "disabled");
 
-  reg = bar0_.Read32(0x04250);
-  ebbrt::kprintf(
-      "0x04250: HLREG0 (Highlander Control 0 register)       0x%08X\n"
-      "       Transmit CRC:                                  %s\n"
-      "       Receive CRC Strip:                             %s\n"
-      "       Jumbo Frames:                                  %s\n"
-      "       Pad Short Frames:                              %s\n"
-      "       Loopback:                                      %s\n",
-      reg, reg & IXGBE_HLREG0_TXCRCEN ? "enabled" : "disabled",
-      reg & IXGBE_HLREG0_RXCRCSTRP ? "enabled" : "disabled",
-      reg & IXGBE_HLREG0_JUMBOEN ? "enabled" : "disabled",
-      reg & IXGBE_HLREG0_TXPADEN ? "enabled" : "disabled",
-      reg & IXGBE_HLREG0_LPBK ? "enabled" : "disabled");
+reg = bar0_.Read32(0x04250);
+ebbrt::kprintf(
+    "0x04250: HLREG0 (Highlander Control 0 register)       0x%08X\n"
+    "       Transmit CRC:                                  %s\n"
+    "       Receive CRC Strip:                             %s\n"
+    "       Jumbo Frames:                                  %s\n"
+    "       Pad Short Frames:                              %s\n"
+    "       Loopback:                                      %s\n",
+    reg, reg & IXGBE_HLREG0_TXCRCEN ? "enabled" : "disabled",
+    reg & IXGBE_HLREG0_RXCRCSTRP ? "enabled" : "disabled",
+    reg & IXGBE_HLREG0_JUMBOEN ? "enabled" : "disabled",
+    reg & IXGBE_HLREG0_TXPADEN ? "enabled" : "disabled",
+    reg & IXGBE_HLREG0_LPBK ? "enabled" : "disabled");
 
-  /* General Registers */
-  ebbrt::kprintf(
-      "0x00000: CTRL        (Device Control)                 0x%08X\n",
-      bar0_.Read32(0x0));
+ebbrt::kprintf(
+    "0x00000: CTRL        (Device Control)                 0x%08X\n",
+    bar0_.Read32(0x0));
 
-  ebbrt::kprintf(
-      "0x00008: STATUS      (Device Status)                  0x%08X\n",
-      bar0_.Read32(0x8));
+ebbrt::kprintf(
+    "0x00008: STATUS      (Device Status)                  0x%08X\n",
+    bar0_.Read32(0x8));*/
 }
 
 void ebbrt::IxgbeDriver::WriteRxctrl(uint32_t m) {

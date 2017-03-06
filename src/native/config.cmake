@@ -9,7 +9,7 @@ option(VIRTIO_NET_POLL "Enable Poll-Only VirtioNet Driver" OFF)
 configure_file(${PLATFORM_SOURCE_DIR}/config.h.in config.h @ONLY)
 
 # Build Settings
-set(CMAKE_CXX_FLAGS                "-Wall -Werror -std=gnu++14 -include ${CMAKE_CURRENT_BINARY_DIR}/config.h")
+set(CMAKE_CXX_FLAGS                "-Wall -std=gnu++14 -include ${CMAKE_CURRENT_BINARY_DIR}/config.h")
 set(CMAKE_CXX_FLAGS_DEBUG          "-O0 -g3")
 set(CMAKE_CXX_FLAGS_MINSIZEREL     "-Os -DNDEBUG")
 set(CMAKE_CXX_FLAGS_RELEASE        "-O4 -flto -DNDEBUG")

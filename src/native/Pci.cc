@@ -155,11 +155,15 @@ uint16_t ebbrt::pci::Function::GetCommand() const {
 }
 
 uint8_t ebbrt::pci::Function::GetClassCode() const {
-  return Read8(kClassCodeAddr);
+    return Read8(kClassCodeAddr);
 }
 
 uint8_t ebbrt::pci::Function::GetFunc() const {
   return func_;
+}
+
+uint8_t ebbrt::pci::Function::GetRevisionId() const {
+    return Read8(kRevisionIdAddr);
 }
 
 uint8_t ebbrt::pci::Function::GetSubclass() const {
@@ -172,6 +176,13 @@ uint8_t ebbrt::pci::Function::GetProgIf() const {
 
 uint8_t ebbrt::pci::Function::GetHeaderType() const {
   return Read8(kHeaderTypeAddr) & ~kHeaderMultifuncMask;
+}
+
+uint16_t ebbrt::pci::Function::GetSubsystemVendorId() const {
+    return Read16(0x2C);
+}
+uint16_t ebbrt::pci::Function::GetSubsystemDeviceId() const {
+    return Read16(0x2E);
 }
 
 ebbrt::pci::Function::operator bool() const { return GetVendorId() == 0xffff; }

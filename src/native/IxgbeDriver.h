@@ -12,6 +12,7 @@
 #include "Pci.h"
 #include "Pfn.h"
 #include "SlabAllocator.h"
+#include "Ixgbe.h"
 
 namespace ebbrt {
 
@@ -59,6 +60,55 @@ class IxgbeDriver {
   void StopDevice();
   void GlobalReset();
   void SetupQueue(uint32_t i);
+  void ixgbe_probe(pci::Device& dev);
+  s32 ixgbe_set_mac_type(struct ixgbe_hw *hw);
+  s32 ixgbe_init_ops_82599(struct ixgbe_hw *hw);
+  int ixgbe_sw_init(struct ixgbe_hw *hw, pci::Device& dev);
+  s32 ixgbe_get_link_capabilities_82599(struct ixgbe_hw *hw,
+				      ixgbe_link_speed *speed, bool *autoneg);
+  enum ixgbe_media_type ixgbe_get_media_type_82599(struct ixgbe_hw *hw);
+  void ixgbe_disable_tx_laser_multispeed_fiber(struct ixgbe_hw *hw);
+  void ixgbe_enable_tx_laser_multispeed_fiber(struct ixgbe_hw *hw);
+  void ixgbe_flap_tx_laser_multispeed_fiber(struct ixgbe_hw *hw);
+  void ixgbe_set_hard_rate_select_speed(struct ixgbe_hw *hw,
+					ixgbe_link_speed speed);
+  s32 ixgbe_setup_mac_link_smartspeed(struct ixgbe_hw *hw,
+				      ixgbe_link_speed speed,
+				      bool autoneg_wait_to_complete);
+  s32 ixgbe_start_mac_link_82599(struct ixgbe_hw *hw,
+				 bool autoneg_wait_to_complete);
+  s32 ixgbe_setup_mac_link_82599(struct ixgbe_hw *hw, ixgbe_link_speed speed,
+				 bool autoneg_wait_to_complete);
+  s32 ixgbe_setup_sfp_modules_82599(struct ixgbe_hw *hw);
+  void ixgbe_init_mac_link_ops_82599(struct ixgbe_hw *hw);
+  s32 ixgbe_reset_hw_82599(struct ixgbe_hw *hw);
+  s32 ixgbe_read_analog_reg8_82599(struct ixgbe_hw *hw, u32 reg, u8 *val);
+  s32 ixgbe_write_analog_reg8_82599(struct ixgbe_hw *hw, u32 reg, u8 val);
+  s32 ixgbe_start_hw_82599(struct ixgbe_hw *hw);
+  s32 ixgbe_identify_phy_82599(struct ixgbe_hw *hw);
+  s32 ixgbe_init_phy_ops_82599(struct ixgbe_hw *hw);
+  u32 ixgbe_get_supported_physical_layer_82599(struct ixgbe_hw *hw);
+  s32 ixgbe_enable_rx_dma_82599(struct ixgbe_hw *hw, u32 regval);
+  s32 prot_autoc_read_82599(struct ixgbe_hw *hw, bool *locked, u32 *reg_val);
+  s32 prot_autoc_write_82599(struct ixgbe_hw *hw, u32 reg_val, bool locked);
+  s32 ixgbe_init_phy_ops_generic(struct ixgbe_hw *hw);
+  s32 ixgbe_init_ops_generic(struct ixgbe_hw *hw);
+  bool ixgbe_mng_enabled(struct ixgbe_hw *hw);
+  u32 ixgbe_read_reg(struct ixgbe_hw *hw, u32 reg, bool quiet);
+  void ixgbe_write_reg(struct ixgbe_hw *hw, u32 reg, u32 value);
+  s32 ixgbe_stop_adapter_generic(struct ixgbe_hw *hw);
+  void ixgbe_disable_rx_generic(struct ixgbe_hw *hw);
+  s32 ixgbe_disable_pcie_master(struct ixgbe_hw *hw);
+  void ixgbe_clear_tx_pending(struct ixgbe_hw *hw);
+  s32 ixgbe_identify_phy_generic(struct ixgbe_hw *hw);
+  bool ixgbe_probe_phy(struct ixgbe_hw *hw, u16 phy_addr);
+  bool ixgbe_validate_phy_addr(struct ixgbe_hw *hw, u32 phy_addr);
+  s32 ixgbe_read_phy_reg_generic(struct ixgbe_hw *hw, u32 reg_addr,
+				 u32 device_type, u16 *phy_data);
+  s32 ixgbe_read_phy_reg_mdi(struct ixgbe_hw *hw, u32 reg_addr, u32 device_type,
+			 u16 *phy_data);
+  s32 ixgbe_get_phy_id(struct ixgbe_hw *hw);
+  enum ixgbe_phy_type ixgbe_get_phy_type_from_id(u32 phy_id);
 
   bool SwsmSmbiRead();
   void SwsmSmbiClear();
