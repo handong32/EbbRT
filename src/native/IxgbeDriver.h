@@ -8,11 +8,11 @@
 #include "../Align.h"
 #include "Debug.h"
 #include "Fls.h"
+#include "Ixgbe.h"
 #include "PageAllocator.h"
 #include "Pci.h"
 #include "Pfn.h"
 #include "SlabAllocator.h"
-#include "Ixgbe.h"
 
 namespace ebbrt {
 
@@ -21,6 +21,7 @@ class IxgbeDriver {
   static bool Probe(pci::Device& dev) {
     if (dev.GetVendorId() == kIxgbeVendorId &&
         dev.GetDeviceId() == kIxgbeDeviceId && dev.GetFunc() == 0) {
+	dev.GetPcieDeviceInfo();
       IxgbeDriver::Create(dev);
       return true;
     }
@@ -61,55 +62,128 @@ class IxgbeDriver {
   void GlobalReset();
   void SetupQueue(uint32_t i);
   void ixgbe_probe(pci::Device& dev);
-  s32 ixgbe_set_mac_type(struct ixgbe_hw *hw);
-  s32 ixgbe_init_ops_82599(struct ixgbe_hw *hw);
-  int ixgbe_sw_init(struct ixgbe_hw *hw, pci::Device& dev);
-  s32 ixgbe_get_link_capabilities_82599(struct ixgbe_hw *hw,
-				      ixgbe_link_speed *speed, bool *autoneg);
-  enum ixgbe_media_type ixgbe_get_media_type_82599(struct ixgbe_hw *hw);
-  void ixgbe_disable_tx_laser_multispeed_fiber(struct ixgbe_hw *hw);
-  void ixgbe_enable_tx_laser_multispeed_fiber(struct ixgbe_hw *hw);
-  void ixgbe_flap_tx_laser_multispeed_fiber(struct ixgbe_hw *hw);
-  void ixgbe_set_hard_rate_select_speed(struct ixgbe_hw *hw,
-					ixgbe_link_speed speed);
-  s32 ixgbe_setup_mac_link_smartspeed(struct ixgbe_hw *hw,
-				      ixgbe_link_speed speed,
-				      bool autoneg_wait_to_complete);
-  s32 ixgbe_start_mac_link_82599(struct ixgbe_hw *hw,
-				 bool autoneg_wait_to_complete);
-  s32 ixgbe_setup_mac_link_82599(struct ixgbe_hw *hw, ixgbe_link_speed speed,
-				 bool autoneg_wait_to_complete);
-  s32 ixgbe_setup_sfp_modules_82599(struct ixgbe_hw *hw);
-  void ixgbe_init_mac_link_ops_82599(struct ixgbe_hw *hw);
-  s32 ixgbe_reset_hw_82599(struct ixgbe_hw *hw);
-  s32 ixgbe_read_analog_reg8_82599(struct ixgbe_hw *hw, u32 reg, u8 *val);
-  s32 ixgbe_write_analog_reg8_82599(struct ixgbe_hw *hw, u32 reg, u8 val);
-  s32 ixgbe_start_hw_82599(struct ixgbe_hw *hw);
-  s32 ixgbe_identify_phy_82599(struct ixgbe_hw *hw);
-  s32 ixgbe_init_phy_ops_82599(struct ixgbe_hw *hw);
-  u32 ixgbe_get_supported_physical_layer_82599(struct ixgbe_hw *hw);
-  s32 ixgbe_enable_rx_dma_82599(struct ixgbe_hw *hw, u32 regval);
-  s32 prot_autoc_read_82599(struct ixgbe_hw *hw, bool *locked, u32 *reg_val);
-  s32 prot_autoc_write_82599(struct ixgbe_hw *hw, u32 reg_val, bool locked);
-  s32 ixgbe_init_phy_ops_generic(struct ixgbe_hw *hw);
-  s32 ixgbe_init_ops_generic(struct ixgbe_hw *hw);
-  bool ixgbe_mng_enabled(struct ixgbe_hw *hw);
-  u32 ixgbe_read_reg(struct ixgbe_hw *hw, u32 reg, bool quiet);
-  void ixgbe_write_reg(struct ixgbe_hw *hw, u32 reg, u32 value);
-  s32 ixgbe_stop_adapter_generic(struct ixgbe_hw *hw);
-  void ixgbe_disable_rx_generic(struct ixgbe_hw *hw);
-  s32 ixgbe_disable_pcie_master(struct ixgbe_hw *hw);
-  void ixgbe_clear_tx_pending(struct ixgbe_hw *hw);
-  s32 ixgbe_identify_phy_generic(struct ixgbe_hw *hw);
-  bool ixgbe_probe_phy(struct ixgbe_hw *hw, u16 phy_addr);
-  bool ixgbe_validate_phy_addr(struct ixgbe_hw *hw, u32 phy_addr);
-  s32 ixgbe_read_phy_reg_generic(struct ixgbe_hw *hw, u32 reg_addr,
-				 u32 device_type, u16 *phy_data);
-  s32 ixgbe_read_phy_reg_mdi(struct ixgbe_hw *hw, u32 reg_addr, u32 device_type,
-			 u16 *phy_data);
-  s32 ixgbe_get_phy_id(struct ixgbe_hw *hw);
+  s32 ixgbe_set_mac_type(struct ixgbe_hw* hw);
+  s32 ixgbe_init_ops_82599(struct ixgbe_hw* hw);
+  int ixgbe_sw_init(struct ixgbe_hw* hw, pci::Device& dev);
+  s32 ixgbe_get_link_capabilities_82599(struct ixgbe_hw* hw,
+                                        ixgbe_link_speed* speed, bool* autoneg);
+  enum ixgbe_media_type ixgbe_get_media_type_82599(struct ixgbe_hw* hw);
+  void ixgbe_disable_tx_laser_multispeed_fiber(struct ixgbe_hw* hw);
+  void ixgbe_enable_tx_laser_multispeed_fiber(struct ixgbe_hw* hw);
+  void ixgbe_flap_tx_laser_multispeed_fiber(struct ixgbe_hw* hw);
+  void ixgbe_set_hard_rate_select_speed(struct ixgbe_hw* hw,
+                                        ixgbe_link_speed speed);
+  s32 ixgbe_setup_mac_link_smartspeed(struct ixgbe_hw* hw,
+                                      ixgbe_link_speed speed,
+                                      bool autoneg_wait_to_complete);
+  s32 ixgbe_start_mac_link_82599(struct ixgbe_hw* hw,
+                                 bool autoneg_wait_to_complete);
+  s32 ixgbe_setup_mac_link_82599(struct ixgbe_hw* hw, ixgbe_link_speed speed,
+                                 bool autoneg_wait_to_complete);
+  s32 ixgbe_setup_sfp_modules_82599(struct ixgbe_hw* hw);
+  void ixgbe_init_mac_link_ops_82599(struct ixgbe_hw* hw);
+  s32 ixgbe_reset_hw_82599(struct ixgbe_hw* hw);
+  s32 ixgbe_read_analog_reg8_82599(struct ixgbe_hw* hw, u32 reg, u8* val);
+  s32 ixgbe_write_analog_reg8_82599(struct ixgbe_hw* hw, u32 reg, u8 val);
+  s32 ixgbe_start_hw_82599(struct ixgbe_hw* hw);
+  s32 ixgbe_identify_phy_82599(struct ixgbe_hw* hw);
+  s32 ixgbe_init_phy_ops_82599(struct ixgbe_hw* hw);
+  u32 ixgbe_get_supported_physical_layer_82599(struct ixgbe_hw* hw);
+  s32 ixgbe_enable_rx_dma_82599(struct ixgbe_hw* hw, u32 regval);
+  s32 prot_autoc_read_82599(struct ixgbe_hw* hw, bool* locked, u32* reg_val);
+  s32 prot_autoc_write_82599(struct ixgbe_hw* hw, u32 reg_val, bool locked);
+  s32 ixgbe_init_phy_ops_generic(struct ixgbe_hw* hw);
+  s32 ixgbe_init_ops_generic(struct ixgbe_hw* hw);
+  bool ixgbe_mng_enabled(struct ixgbe_hw* hw);
+  u32 ixgbe_read_reg(struct ixgbe_hw* hw, u32 reg, bool quiet);
+  void IXGBE_WRITE_REG(struct ixgbe_hw* hw, u32 reg, u32 value);
+  s32 ixgbe_stop_adapter_generic(struct ixgbe_hw* hw);
+  void ixgbe_disable_rx_generic(struct ixgbe_hw* hw);
+  s32 ixgbe_disable_pcie_master(struct ixgbe_hw* hw);
+  void ixgbe_clear_tx_pending(struct ixgbe_hw* hw);
+  s32 ixgbe_identify_phy_generic(struct ixgbe_hw* hw);
+  bool ixgbe_probe_phy(struct ixgbe_hw* hw, u16 phy_addr);
+  bool ixgbe_validate_phy_addr(struct ixgbe_hw* hw, u32 phy_addr);
+  s32 ixgbe_read_phy_reg_generic(struct ixgbe_hw* hw, u32 reg_addr,
+                                 u32 device_type, u16* phy_data);
+  s32 ixgbe_read_phy_reg_mdi(struct ixgbe_hw* hw, u32 reg_addr, u32 device_type,
+                             u16* phy_data);
+  s32 ixgbe_get_phy_id(struct ixgbe_hw* hw);
   enum ixgbe_phy_type ixgbe_get_phy_type_from_id(u32 phy_id);
+  s32 ixgbe_identify_module_generic(struct ixgbe_hw* hw);
+  s32 ixgbe_identify_sfp_module_generic(struct ixgbe_hw* hw);
+  s32 ixgbe_read_i2c_eeprom_generic(struct ixgbe_hw* hw, u8 byte_offset,
+                                    u8* eeprom_data);
+  s32 ixgbe_read_i2c_byte_generic(struct ixgbe_hw* hw, u8 byte_offset,
+                                  u8 dev_addr, u8* data);
+  s32 ixgbe_read_i2c_byte_generic_int(struct ixgbe_hw* hw, u8 byte_offset,
+                                      u8 dev_addr, u8* data, bool lock);
+  void ixgbe_i2c_bus_clear(struct ixgbe_hw* hw);
+  void ixgbe_i2c_stop(struct ixgbe_hw* hw);
+  s32 ixgbe_clock_in_i2c_byte(struct ixgbe_hw* hw, u8* data);
+  s32 ixgbe_clock_in_i2c_bit(struct ixgbe_hw* hw, bool* data);
+  s32 ixgbe_get_i2c_ack(struct ixgbe_hw* hw);
+  s32 ixgbe_clock_out_i2c_byte(struct ixgbe_hw* hw, u8 data);
+  s32 ixgbe_clock_out_i2c_bit(struct ixgbe_hw* hw, bool data);
+  void ixgbe_i2c_start(struct ixgbe_hw* hw);
+  void ixgbe_lower_i2c_clk(struct ixgbe_hw* hw, u32* i2cctl);
+  s32 ixgbe_set_i2c_data(struct ixgbe_hw* hw, u32* i2cctl, bool data);
+  void ixgbe_raise_i2c_clk(struct ixgbe_hw* hw, u32* i2cctl);
+  bool ixgbe_get_i2c_data(struct ixgbe_hw* hw, u32* i2cctl);
+  bool ixgbe_is_sfp_probe(struct ixgbe_hw* hw, u8 offset, u8 addr);
+  void ixgbe_set_lan_id_multi_port_pcie(struct ixgbe_hw* hw);
+  s32 ixgbe_get_device_caps_generic(struct ixgbe_hw* hw, u16* device_caps);
+  s32 ixgbe_read_eeprom_82599(struct ixgbe_hw* hw, u16 offset, u16* data);
+  s32 ixgbe_read_eerd_generic(struct ixgbe_hw* hw, u16 offset, u16* data);
+  s32 ixgbe_read_eerd_buffer_generic(struct ixgbe_hw* hw, u16 offset, u16 words,
+                                     u16* data);
+  s32 ixgbe_poll_eerd_eewr_done(struct ixgbe_hw* hw, u32 ee_reg);
+  s32 ixgbe_init_eeprom_params_generic(struct ixgbe_hw* hw);
 
+  void ixgbe_release_eeprom_semaphore(struct ixgbe_hw* hw);
+  s32 ixgbe_get_eeprom_semaphore(struct ixgbe_hw* hw);
+  void ixgbe_release_swfw_sync(struct ixgbe_hw* hw, u32 mask);
+  s32 ixgbe_acquire_swfw_sync(struct ixgbe_hw* hw, u32 mask);
+
+  s32 ixgbe_get_mac_addr_generic(struct ixgbe_hw* hw, u8* mac_addr);
+  s32 ixgbe_reset_pipeline_82599(struct ixgbe_hw* hw);
+  bool ixgbe_verify_lesm_fw_enabled_82599(struct ixgbe_hw* hw);
+  s32 ixgbe_check_reset_blocked(struct ixgbe_hw* hw);
+  s32 ixgbe_check_mac_link_generic(struct ixgbe_hw* hw, ixgbe_link_speed* speed,
+                                   bool* link_up,
+                                   bool link_up_wait_to_complete);
+
+  s32 ixgbe_init_rx_addrs_generic(struct ixgbe_hw* hw);
+  s32 ixgbe_init_uta_tables_generic(struct ixgbe_hw* hw);
+  s32 ixgbe_clear_vmdq_generic(struct ixgbe_hw* hw, u32 rar, u32 vmdq);
+  s32 ixgbe_clear_rar_generic(struct ixgbe_hw* hw, u32 index);
+  s32 ixgbe_set_rar_generic(struct ixgbe_hw* hw, u32 index, u8* addr, u32 vmdq,
+                            u32 enable_addr);
+  s32 ixgbe_set_vmdq_generic(struct ixgbe_hw* hw, u32 rar, u32 vmdq);
+  s32 ixgbe_validate_mac_addr(u8* mac_addr);
+
+  s32 ixgbe_get_san_mac_addr_generic(struct ixgbe_hw *hw, u8 *san_mac_addr);
+  s32 ixgbe_get_san_mac_addr_offset(struct ixgbe_hw *hw,
+				    u16 *san_mac_offset);
+  s32 ixgbe_get_wwn_prefix_generic(struct ixgbe_hw *hw, u16 *wwnn_prefix,
+				   u16 *wwpn_prefix);
+  s32 ixgbe_get_sfp_init_sequence_offsets(struct ixgbe_hw *hw,
+					u16 *list_offset,
+					  u16 *data_offset);
+  s32 ixgbe_read_eeprom_bit_bang_generic(struct ixgbe_hw *hw, u16 offset,
+					 u16 *data);
+  s32 ixgbe_read_eeprom_buffer_bit_bang(struct ixgbe_hw *hw, u16 offset,
+					u16 words, u16 *data);
+  void ixgbe_release_eeprom(struct ixgbe_hw *hw);
+  s32 ixgbe_ready_eeprom(struct ixgbe_hw *hw);
+  void ixgbe_standby_eeprom(struct ixgbe_hw *hw);
+  u16 ixgbe_shift_in_eeprom_bits(struct ixgbe_hw *hw, u16 count);
+  void ixgbe_shift_out_eeprom_bits(struct ixgbe_hw *hw, u16 data,
+				   u16 count);
+  void ixgbe_lower_eeprom_clk(struct ixgbe_hw *hw, u32 *eec);
+  void ixgbe_raise_eeprom_clk(struct ixgbe_hw *hw, u32 *eec);
+  s32 ixgbe_acquire_eeprom(struct ixgbe_hw *hw);
+  
   bool SwsmSmbiRead();
   void SwsmSmbiClear();
 
@@ -233,7 +307,7 @@ class IxgbeDriver {
   uint8_t ReadTxdctl_enable(uint32_t n);
 
   uint16_t ReadRdh_1(uint32_t n);
-  
+
   // statistics
   uint32_t ReadTpr();
   uint32_t ReadGprc();
@@ -244,7 +318,7 @@ class IxgbeDriver {
   void ProcessPacket(uint32_t n);
   uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr);
   void SendPacket(uint32_t n);
-  
+
   pci::Device& dev_;
   pci::Bar& bar0_;
 
@@ -593,23 +667,22 @@ class IxgbeDriver {
 
     } e10k_queue_t;*/
 
-    // Queue
+  // Queue
   typedef struct {
-      rdesc_legacy_t* rx_ring;
-      size_t rx_head;
-      size_t rx_tail;
-      size_t rx_size;
+    rdesc_legacy_t* rx_ring;
+    size_t rx_head;
+    size_t rx_tail;
+    size_t rx_size;
 
-      tdesc_legacy_t* tx_ring;
-      size_t tx_head;
-      size_t tx_tail;
-      size_t tx_size;
+    tdesc_legacy_t* tx_ring;
+    size_t tx_head;
+    size_t tx_tail;
+    size_t tx_size;
 
-      
   } e10k_queue_t;
   e10k_queue_t* ixgq;
 
-  void *rxbuf;
+  void* rxbuf;
 
 };  // class IxgbeDriver
 }  // namespace ebbrt

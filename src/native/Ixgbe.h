@@ -11,8 +11,13 @@ typedef int16_t s16;
 typedef int32_t s32;
 typedef int64_t s64;
 
+#define DEBUGOUT3 ebbrt::kprintf
 #define DEBUGOUT2 ebbrt::kprintf
+#define DEBUGOUT1 ebbrt::kprintf
+#define DEBUGOUT ebbrt::kprintf
 #define DEBUGFUNC ebbrt::kprintf
+#define usec_delay ebbrt::clock::SleepMicro
+#define msec_delay ebbrt::clock::SleepMilli
 
 /* Override this by setting IOMEM in your ixgbe_osdep.h header */
 #ifndef IOMEM
@@ -3763,4 +3768,11 @@ static const u32 ixgbe_mvals_base[IXGBE_MVALS_IDX_LIMIT] = {
 #define IXGBE_82599_MC_TBL_SIZE   128
 #define IXGBE_82599_VFT_TBL_SIZE  128
 #define IXGBE_82599_RX_PB_SIZE	  512
+
+static inline bool ixgbe_removed(void *addr)
+{
+	return (!addr);
+}
+#define IXGBE_REMOVED(a) ixgbe_removed(a)
+
 #endif  // BAREMETAL_SRC_INCLUDE_EBBRT_IXGBE_H_
