@@ -144,6 +144,15 @@ void ebbrt::pci::Function::Write32(uint8_t offset, uint32_t val) {
   return PciWrite32(bus_, device_, func_, offset, val);
 }
 
+void ebbrt::pci::Function::GetPcieDeviceInfo() const {
+    ebbrt::kprintf("0xA0 - %p\n", Read32(0xA0));
+    ebbrt::kprintf("0xA4 - %p\n", Read32(0xA4));
+    ebbrt::kprintf("0xA8 - %p\n", Read32(0xA8));
+    ebbrt::kprintf("0xAC - %p\n", Read32(0xAC));
+    ebbrt::kprintf("0xB0 - %p\n", Read32(0xB0));
+    ebbrt::kprintf("0xC4 - %p\n", Read32(0xC4));
+}
+
 uint16_t ebbrt::pci::Function::GetVendorId() const {
   return Read16(kVendorIdAddr);
 }

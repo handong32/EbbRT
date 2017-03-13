@@ -33,7 +33,8 @@ class Function {
   uint8_t GetFunc() const;
   uint16_t GetSubsystemVendorId() const;
   uint16_t GetSubsystemDeviceId() const;
-
+  void GetPcieDeviceInfo() const;
+  
   operator bool() const;
   bool IsMultifunc() const;
   bool IsBridge() const;

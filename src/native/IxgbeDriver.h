@@ -44,8 +44,8 @@ class IxgbeDriver {
    *	against the system mbuf pool limit, you can tune nmbclusters
    *	to adjust for this.
    */
-  static const constexpr uint32_t NTXDESCS = 256;
-  static const constexpr uint32_t NRXDESCS = 256;
+  static const constexpr uint32_t NTXDESCS = 128;
+  static const constexpr uint32_t NRXDESCS = 128;
   static const constexpr uint32_t RXBUFSZ = 2048;
 
   explicit IxgbeDriver(pci::Device& dev) : dev_(dev), bar0_(dev.GetBar(0)) {
@@ -184,6 +184,16 @@ class IxgbeDriver {
   void ixgbe_raise_eeprom_clk(struct ixgbe_hw *hw, u32 *eec);
   s32 ixgbe_acquire_eeprom(struct ixgbe_hw *hw);
   
+  s32 ixgbe_start_hw_generic(struct ixgbe_hw *hw);
+  s32 ixgbe_setup_fc_generic(struct ixgbe_hw *hw);
+  s32 ixgbe_clear_hw_cntrs_generic(struct ixgbe_hw *hw);
+  s32 ixgbe_clear_vfta_generic(struct ixgbe_hw *hw);
+  s32 ixgbe_start_hw_gen2(struct ixgbe_hw *hw);
+
+  s32 ixgbe_setup_mac_link_multispeed_fiber(struct ixgbe_hw *hw,
+					  ixgbe_link_speed speed,
+					    bool autoneg_wait_to_complete);
+					
   bool SwsmSmbiRead();
   void SwsmSmbiClear();
 
