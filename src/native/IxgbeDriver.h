@@ -72,14 +72,37 @@ class IxgbeDriver : public EthernetDevice {
   NetworkManager::Interface& itf_;
   EthernetAddress mac_addr_;
 
+  uint32_t IXGBE_READ_REG(uint32_t reg);
+  void IXGBE_WRITE_REG(uint32_t reg, uint32_t value);
+
   void InitStruct();
   void DeviceInfo();
   void Init();
+  void ixgbe_probe();
+  void ixgbe_init_eeprom_params_generic();
+  void ixgbe_get_invariants_82599();
+  bool ixgbe_mng_enabled();
+  void ixgbe_reset_hw_82599();
+  s32 ixgbe_disable_pcie_master();
+  void ixgbe_clear_tx_pending();
+  s32 ixgbe_init_phy_ops_82599();
+  s32 ixgbe_identify_phy_82599();
+  s32 ixgbe_identify_phy_generic();
+  s32 ixgbe_reset_phy_generic();
+  s32 ixgbe_check_mac_link_generic(ixgbe_link_speed *speed,
+				   bool *link_up, bool link_up_wait_to_complete);
+  s32 ixgbe_get_mac_addr_generic(u8 *mac_addr);
+  s32 ixgbe_init_rx_addrs_generic();
+  s32 ixgbe_init_uta_tables_generic();
+
+  s32 ixgbe_stop_adapter_generic();
+
   void PhyInit();
   void StopDevice();
   void GlobalReset();
   void SetupQueue(uint32_t i);
-
+  
+  
   bool SwsmSmbiRead();
   void SwsmSmbiClear();
 
@@ -237,7 +260,12 @@ class IxgbeDriver : public EthernetDevice {
   e10k_queue_t* ixgq;
 
   void* rxbuf;
-
+  
+  struct ixgbe_eeprom_info *eeprom;
+  struct ixgbe_mac_info *mac;
+  struct ixgbe_hw *hw;
+  struct ixgbe_phy_info *phy;
+  
   friend class IxgbeDriverRep;
 };  // class IxgbeDriver
 

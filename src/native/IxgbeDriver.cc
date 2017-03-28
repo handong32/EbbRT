@@ -16,15 +16,17 @@
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
 
-  ixgbe_dev->Init();
+  // ixgbe_dev->Init();
+  ixgbe_dev->ixgbe_probe();
   ixgbe_dev->ebb_ =
       IxgbeDriverRep::Create(ixgbe_dev, ebb_allocator->AllocateLocal());
-  ixgbe_dev->SetupQueue(0);
+
+  // ixgbe_dev->SetupQueue(0);
   ebbrt::clock::SleepMilli(200);
   ebbrt::kprintf("intel 82599 card initialzed\n");
 
   // Send test packet
-  //ixgbe_dev->SendPacket(0);
+  // ixgbe_dev->SendPacket(0);
 
   /*while (1) {
     // ebbrt::clock::SleepMilli(10000);
@@ -48,17 +50,18 @@ void ebbrt::IxgbeDriver::Run() { ebb_->Run(); }
 
 void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
 
-    //std::unique_ptr<StaticIOBuf> b;
-    //auto b = MakeUniqueIOBuf(0);
-    VirtioNetHeader* header;
+  // std::unique_ptr<StaticIOBuf> b;
+  // auto b = MakeUniqueIOBuf(0);
+  VirtioNetHeader* header;
 
-  //auto len = buf->ComputeChainDataLength();
-    //ebbrt::kprintf("%s chain elements = %d, %d\n", __PRETTY_FUNCTION__, buf->CountChainElements(), buf->ComputeChainDataLength());
-  
-    //auto dp = buf->GetDataPointer();
-    //auto len = buf->ComputeChainDataLength();
-    //auto txbuf = dp.Get(len * sizeof(uint8_t));
-  
+  // auto len = buf->ComputeChainDataLength();
+  // ebbrt::kprintf("%s chain elements = %d, %d\n", __PRETTY_FUNCTION__,
+  // buf->CountChainElements(), buf->ComputeChainDataLength());
+
+  // auto dp = buf->GetDataPointer();
+  // auto len = buf->ComputeChainDataLength();
+  // auto txbuf = dp.Get(len * sizeof(uint8_t));
+
   /*auto t = dp.Get(buf->ComputeChainDataLength() * sizeof(uint8_t));
   for(size_t i = 0; i < buf->ComputeChainDataLength(); i++)
   {
@@ -67,11 +70,11 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   ebbrt::kprintf("\n\n");*/
 
   // we have enough descriptors to avoid a copy
-  auto b = MakeUniqueIOBuf(sizeof(VirtioNetHeader),  true);
+  auto b = MakeUniqueIOBuf(sizeof(VirtioNetHeader), true);
   header = reinterpret_cast<VirtioNetHeader*>(b->MutData());
   b->PrependChain(std::move(buf));
 
-  //auto len = buf->ComputeChainDataLength();
+  // auto len = buf->ComputeChainDataLength();
 
   kassert(header != nullptr);
   if (pinfo.flags & PacketInfo::kNeedsCsum) {
@@ -84,19 +87,18 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     header->hdr_len = pinfo.hdr_len;
     header->gso_size = pinfo.gso_size;
   }
-  
-  //auto elements = b->CountChainElements();
-  //uint64_t tmp1 = static_cast<uint64_t>(elements);
 
-  //auto txphys = reinterpret_cast<uint64_t>(b->MutData());
-  //auto txbuf = (uint8_t*)malloc(sizeof(uint8_t) * len);
-  //memset(txbuf, 0, len * sizeof(uint8_t));
-  //auto dp = buf->GetDataPointer();
+  // auto elements = b->CountChainElements();
+  // uint64_t tmp1 = static_cast<uint64_t>(elements);
+
+  // auto txphys = reinterpret_cast<uint64_t>(b->MutData());
+  // auto txbuf = (uint8_t*)malloc(sizeof(uint8_t) * len);
+  // memset(txbuf, 0, len * sizeof(uint8_t));
+  // auto dp = buf->GetDataPointer();
 
   auto dp = b->GetDataPointer();
   auto len = b->ComputeChainDataLength();
   auto txbuf = dp.Get(len * sizeof(uint8_t));
-
 
   auto tail = ixgq_.tx_tail;
   // update buffer address for descriptor
@@ -104,14 +106,14 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   ixgq_.tx_ring[tail].length = len;
   ixgq_.tx_ring[tail].eop = 1;  // indicate end of packet
   // so that hw will modify dd bit after packet transmitted
-  ixgq_.tx_ring[tail].rs = 1;  
+  ixgq_.tx_ring[tail].rs = 1;
 
   ebbrt::kprintf("taddr - %p %p len:%ld\n", txbuf,
                  ixgq_.tx_ring[tail].buffer_address,
                  ixgq_.tx_ring[tail].length);
 
   for (size_t i = 0; i < len; i++) {
-      ebbrt::kprintf("%02X ", txbuf[i]);
+    ebbrt::kprintf("%02X ", txbuf[i]);
   }
   ebbrt::kprintf("\n\n");
 
@@ -119,14 +121,14 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   // bump tx_tail
   ixgq_.tx_tail = (tail + 1) % ixgq_.tx_size;
   WriteTdt_1(n, ixgq_.tx_tail);  // indicates position beyond last descriptor hw
-                               // can process
+  // can process
 
   auto head = ixgq_.tx_head;
-  //std::atomic_thread_fence(std::memory_order_release);
+  // std::atomic_thread_fence(std::memory_order_release);
   ebbrt::kprintf("dd = %d\n", ixgq_.tx_ring[head].dd);
   while (ixgq_.tx_ring[head].dd == 0) {
   }  // hw will transmit packet pointed by head, after tranmission, dd bit is
-     // set and head is incremented, finish processing when head == tail
+  // set and head is incremented, finish processing when head == tail
 
   // header should be incremented by hw, need to update tx_head
   // ebbrt::kprintf("header = %d, %d\n", head, ReadTdh(n));
@@ -187,7 +189,8 @@ void ebbrt::IxgbeDriver::SendPacket(uint32_t n) {
   ixgq->tx_ring[tail].buffer_address = txphys;
   ixgq->tx_ring[tail].length = 60;
   ixgq->tx_ring[tail].eop = 1;  // indicate end of packet
-  ixgq->tx_ring[tail].rs = 1;  // so that hw will modify dd bit after packet transmitted
+  ixgq->tx_ring[tail].rs =
+      1;  // so that hw will modify dd bit after packet transmitted
 
   ebbrt::kprintf("taddr - %p %p len:%d\n", txbuf,
                  ixgq->tx_ring[tail].buffer_address,
@@ -196,14 +199,14 @@ void ebbrt::IxgbeDriver::SendPacket(uint32_t n) {
   // bump tx_tail
   ixgq->tx_tail = (tail + 1) % ixgq->tx_size;
   WriteTdt(n, ixgq->tx_tail);  // indicates position beyond last descriptor hw
-                               // can process
+  // can process
 
   auto head = ixgq->tx_head;
-  //std::atomic_thread_fence(std::memory_order_seq_cst);
+  // std::atomic_thread_fence(std::memory_order_seq_cst);
   ebbrt::kprintf("dd = %d\n", ixgq->tx_ring[head].dd);
   while (ixgq->tx_ring[head].dd == 0) {
   }  // hw will transmit packet pointed by head, after tranmission, dd bit is
-     // set and head is incremented, finish processing when head == tail
+  // set and head is incremented, finish processing when head == tail
 
   // header should be incremented by hw, need to update tx_head
   // ebbrt::kprintf("header = %d, %d\n", head, ReadTdh(n));
@@ -1113,6 +1116,463 @@ void ebbrt::IxgbeDriver::GlobalReset() {
   ReadCtrl();
 }
 
+uint32_t ebbrt::IxgbeDriver::IXGBE_READ_REG(uint32_t reg) {
+  return bar0_.Read32(reg);
+}
+
+void ebbrt::IxgbeDriver::IXGBE_WRITE_REG(uint32_t reg, uint32_t value) {
+    KPRINTF("WRITE -> VAL:0x%X REG:0x%X\n", value, reg);
+    bar0_.Write32(reg, value);
+}
+
+void ebbrt::IxgbeDriver::ixgbe_get_invariants_82599() {
+    mac->mcft_size = IXGBE_82599_MC_TBL_SIZE;
+    mac->vft_size = IXGBE_82599_VFT_TBL_SIZE;
+    mac->num_rar_entries = IXGBE_82599_RAR_ENTRIES;
+    mac->max_rx_queues = IXGBE_82599_MAX_RX_QUEUES;
+    mac->max_tx_queues = IXGBE_82599_MAX_TX_QUEUES;
+    mac->max_msix_vectors = 64;
+}
+
+void ebbrt::IxgbeDriver::ixgbe_init_eeprom_params_generic() {
+    u32 eec;
+    u16 eeprom_size;
+  
+    // ixgbe_init_eeprom_params_generic
+    if (eeprom->type == ixgbe_eeprom_uninitialized) {
+	KPRINTF(" ixgbe_init_eeprom_params_generic a\n");
+	
+	eeprom->type = ixgbe_eeprom_none;
+	/* Set default semaphore delay to 10ms which is a well
+	 * tested value */
+	eeprom->semaphore_delay = 10;
+	/* Clear EEPROM page size, it will be initialized as needed */
+	eeprom->word_page_size = 0;
+	
+	eec = IXGBE_READ_REG(IXGBE_EEC);
+	if (eec & IXGBE_EEC_PRES) {
+	    KPRINTF(" ixgbe_init_eeprom_params_generic b\n");
+	    eeprom->type = ixgbe_eeprom_spi;
+	    
+	    /*
+	     * SPI EEPROM is assumed here.  This code would need to
+	     * change if a future EEPROM is not SPI.
+	     */
+	    eeprom_size = (u16)((eec & IXGBE_EEC_SIZE) >>
+				IXGBE_EEC_SIZE_SHIFT);
+	    
+	    eeprom->word_size = 1 << (eeprom_size +
+				      IXGBE_EEPROM_WORD_SIZE_SHIFT);
+	}
+
+	if (eec & IXGBE_EEC_ADDR_SIZE) {
+	    eeprom->address_bits = 16;
+	    KPRINTF(" ixgbe_init_eeprom_params_generic c\n");
+	}
+	else {
+	    eeprom->address_bits = 8;
+	    KPRINTF(" ixgbe_init_eeprom_params_generic d\n");
+	}
+
+	KPRINTF("Eeprom params: type = %d, size = %d, address bits: "
+	       "%d\n", eeprom->type, eeprom->word_size,
+	       eeprom->address_bits);
+    }
+}
+
+bool ebbrt::IxgbeDriver::ixgbe_mng_enabled() {
+    u32 fwsm, manc, factps;
+    
+    fwsm = IXGBE_READ_REG(IXGBE_FWSM);
+    if ((fwsm & IXGBE_FWSM_MODE_MASK) != IXGBE_FWSM_FW_MODE_PT)
+	return false;
+    
+    manc = IXGBE_READ_REG(IXGBE_MANC);
+    if (!(manc & IXGBE_MANC_RCV_TCO_EN))
+	return false;
+    
+    factps = IXGBE_READ_REG(IXGBE_FACTPS);
+    if (factps & IXGBE_FACTPS_MNGCG)
+	return false;
+    
+    return true;
+}
+
+void ebbrt::IxgbeDriver::ixgbe_clear_tx_pending() {
+    KPRINTF("%s\n", __FUNCTION__);
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_disable_pcie_master() {
+    s32 status = 0;
+    
+    KPRINTF("%s\n", __FUNCTION__);
+
+    /* Always set this bit to ensure any future transactions are blocked */
+    IXGBE_WRITE_REG(IXGBE_CTRL, IXGBE_CTRL_GIO_DIS);
+    
+    /* Exit if master requests are blocked */
+    if (!(IXGBE_READ_REG(IXGBE_STATUS) & IXGBE_STATUS_GIO)) {
+	return status;
+    }
+
+    return -1;    
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_stop_adapter_generic() {
+    u32 reg_val;
+    u16 i;
+
+    KPRINTF("%s\n", __FUNCTION__);
+    
+    /*
+     * Set the adapter_stopped flag so other driver functions stop touching
+     * the hardware
+     */
+    hw->adapter_stopped = true;
+    
+    /* Disable the receive unit */
+    IXGBE_WRITE_REG(IXGBE_RXCTRL, 0);
+    
+    /* Clear interrupt mask to stop interrupts from being generated */
+    IXGBE_WRITE_REG(IXGBE_EIMC, IXGBE_IRQ_CLEAR_MASK);
+    
+    /* Clear any pending interrupts, flush previous writes */
+    IXGBE_READ_REG(IXGBE_EICR);
+    
+    /* Disable the transmit unit.  Each queue must be disabled. */
+    for (i = 0; i < mac->max_tx_queues; i++)
+	IXGBE_WRITE_REG(IXGBE_TXDCTL(i), IXGBE_TXDCTL_SWFLSH);
+
+    /* Disable the receive unit by stopping each queue */
+    for (i = 0; i < mac->max_rx_queues; i++) {
+	reg_val = IXGBE_READ_REG(IXGBE_RXDCTL(i));
+	reg_val &= ~IXGBE_RXDCTL_ENABLE;
+	reg_val |= IXGBE_RXDCTL_SWFLSH;
+	IXGBE_WRITE_REG(IXGBE_RXDCTL(i), reg_val);
+    }
+
+    /* flush all queues disables */
+    IXGBE_WRITE_FLUSH();
+    udelay(2000);
+
+    /*
+     * Prevent the PCI-E bus from from hanging by disabling PCI-E master
+     * access and verify no pending requests
+     */
+    return ixgbe_disable_pcie_master();
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_identify_phy_generic() {
+     s32 status = IXGBE_ERR_PHY_ADDR_INVALID;
+     static int hc = 0;
+     
+     if(hc == 0){
+	 hc ++;
+	 phy->type = ixgbe_phy_unknown; 
+	 phy->mdio.prtad = 0x0; 
+	 phy->mdio.mmds = 0x0;
+	 status = 0;
+     }
+     else if(hc == 1){
+	 hc ++;
+	 phy->type = ixgbe_phy_sfp_passive_unknown;
+	 phy->mdio.prtad = 0x0; 
+	 phy->mdio.mmds = 0x0;
+	 status = 0;
+     }
+     
+     KPRINTF("%s 0x%X 0x%X 0x%X\n", __FUNCTION__, phy->type, phy->mdio.prtad, phy->mdio.mmds);
+
+     return status;
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_identify_phy_82599() {
+    s32 status = IXGBE_ERR_PHY_ADDR_INVALID;
+    
+    KPRINTF("%s\n", __FUNCTION__);
+    
+    /* Detect PHY if not unknown - returns success if already detected. */
+    status = ixgbe_identify_phy_generic();
+
+    /* Set PHY type none if no PHY detected */
+    if (phy->type == ixgbe_phy_unknown) {
+	phy->type = ixgbe_phy_none;
+	status = 0;
+    }
+
+    /* Return error if SFP module has been detected but is not supported */
+    if (phy->type == ixgbe_phy_sfp_unsupported)
+	status = IXGBE_ERR_SFP_NOT_SUPPORTED;
+
+    return status;
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_init_phy_ops_82599() {
+    s32 ret_val = 0;
+
+    KPRINTF("%s\n", __FUNCTION__);
+
+    /* Identify the PHY or SFP module */
+    ret_val = ixgbe_identify_phy_82599();
+
+    /* Setup function pointers based on detected SFP module and speeds */
+    //ixgbe_init_mac_link_ops_82599();
+
+    return ret_val;
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_reset_phy_generic() {
+    s32 status = 0;
+    
+    KPRINTF("%s\n", __FUNCTION__);
+
+    if (phy->type == ixgbe_phy_unknown)
+	status = ixgbe_identify_phy_generic();
+
+    if (status != 0 || phy->type == ixgbe_phy_none) {	   
+	goto out;
+    }
+    
+out:
+    return status;
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_check_mac_link_generic(ixgbe_link_speed *speed,
+						     bool *link_up, bool link_up_wait_to_complete) {
+    
+    u32 links_reg, links_orig;
+    u32 i;
+    
+    KPRINTF("%s\n", __FUNCTION__);
+    
+    /* clear the old state */
+    links_orig = IXGBE_READ_REG(IXGBE_LINKS);
+    
+    links_reg = IXGBE_READ_REG(IXGBE_LINKS);
+
+    KPRINTF("%s links_orig:0x%X links_reg:0x%X\n", __FUNCTION__, links_orig, links_reg);
+    
+    if (link_up_wait_to_complete) {
+	for (i = 0; i < IXGBE_LINK_UP_TIME; i++) {
+	    if (links_reg & IXGBE_LINKS_UP) {
+		*link_up = true;
+		break;
+	    } else {
+		*link_up = false;
+	    }
+	    mdelay(100);
+	    links_reg = IXGBE_READ_REG(IXGBE_LINKS);
+	}
+    } else {
+	if (links_reg & IXGBE_LINKS_UP)
+	    *link_up = true;
+	else
+	    *link_up = false;
+    }
+    
+    if ((links_reg & IXGBE_LINKS_SPEED_82599) ==
+	IXGBE_LINKS_SPEED_10G_82599)
+	*speed = IXGBE_LINK_SPEED_10GB_FULL;
+    else if ((links_reg & IXGBE_LINKS_SPEED_82599) ==
+	     IXGBE_LINKS_SPEED_1G_82599)
+	*speed = IXGBE_LINK_SPEED_1GB_FULL;
+    else if ((links_reg & IXGBE_LINKS_SPEED_82599) ==
+	     IXGBE_LINKS_SPEED_100_82599)
+	*speed = IXGBE_LINK_SPEED_100_FULL;
+    else
+	*speed = IXGBE_LINK_SPEED_UNKNOWN;
+    
+    KPRINTF("%s link_up:%d speed:0x%X\n", __FUNCTION__, *link_up, *speed);
+    
+    return 0;
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_get_mac_addr_generic(u8 *mac_addr) {
+    u32 rar_high;
+    u32 rar_low;
+    u16 i;
+
+    KPRINTF("%s\n", __FUNCTION__);
+
+    rar_high = IXGBE_READ_REG(IXGBE_RAH(0));
+    rar_low = IXGBE_READ_REG(IXGBE_RAL(0));
+    
+    for (i = 0; i < 4; i++)
+	mac_addr[i] = (u8)(rar_low >> (i*8));
+    
+    for (i = 0; i < 2; i++)
+	mac_addr[i+4] = (u8)(rar_high >> (i*8));
+    
+    return 0;
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_init_uta_tables_generic() {
+    int i;
+    
+    KPRINTF("%s\n", __FUNCTION__);
+    
+    for (i = 0; i < 128; i++)
+	IXGBE_WRITE_REG(IXGBE_UTA(i), 0);
+    
+    return 0;
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_init_rx_addrs_generic() {
+    u32 i;
+    u32 rar_entries = mac->num_rar_entries;
+
+    KPRINTF("%s\n", __FUNCTION__);
+    
+    /*
+     * If the current mac address is valid, assume it is a software override
+     * to the permanent address.
+     * Otherwise, use the permanent address from the eeprom.
+     */
+    
+    KPRINTF(" Keeping Current RAR0 Addr =%pM\n", mac->addr);
+    hw->addr_ctrl.overflow_promisc = 0;
+    
+    hw->addr_ctrl.rar_used_count = 1;
+    
+    /* Zero out the other receive addresses. */
+    KPRINTF("Clearing RAR[1-%d]\n", rar_entries - 1);
+    for (i = 1; i < rar_entries; i++) {
+	IXGBE_WRITE_REG(IXGBE_RAL(i), 0);
+	IXGBE_WRITE_REG(IXGBE_RAH(i), 0);
+    }
+    
+    /* Clear the MTA */
+    hw->addr_ctrl.mta_in_use = 0;
+    IXGBE_WRITE_REG(IXGBE_MCSTCTRL, mac->mc_filter_type);
+    
+    KPRINTF(" Clearing MTA\n");
+    for (i = 0; i < mac->mcft_size; i++)
+	IXGBE_WRITE_REG(IXGBE_MTA(i), 0);
+    
+    ixgbe_init_uta_tables_generic();
+    
+    return 0;
+}
+
+void ebbrt::IxgbeDriver::ixgbe_reset_hw_82599() {
+    ixgbe_link_speed link_speed;
+    s32 status;
+    u32 ctrl, i, autoc2;
+    u32 curr_lms;
+    bool link_up = false;
+
+    KPRINTF("%s\n", __FUNCTION__);
+
+    status = ixgbe_stop_adapter_generic();
+    if(status != 0) {
+	ebbrt::kabort("ixgbe_stop_adapter_generic error\n");
+    }
+
+    /* flush pending Tx transactions */
+    ixgbe_clear_tx_pending();
+
+    /* PHY ops must be identified and initialized prior to reset */
+    
+    /* Identify PHY and related function pointers */
+    status = ixgbe_init_phy_ops_82599();
+    if (status == IXGBE_ERR_SFP_NOT_SUPPORTED) {
+        ebbrt::kabort("ixgbe_init_phy_ops_82599 error\n");
+    }
+    
+    /* Reset PHY */
+    ixgbe_reset_phy_generic();
+    
+    /*
+     * Issue global reset to the MAC. Needs to be SW reset if link is up.
+     * If link reset is used when link is up, it might reset the PHY when
+     * mng is using it.  If link is down or the flag to force full link
+     * reset is set, then perform link reset.
+     */
+    ctrl = IXGBE_CTRL_LNK_RST;
+    if (!hw->force_full_reset) {
+        ixgbe_check_mac_link_generic(&link_speed, &link_up, false);
+	if (link_up)
+	    ctrl = IXGBE_CTRL_RST;
+    }
+
+    ctrl |= IXGBE_READ_REG(IXGBE_CTRL);
+    IXGBE_WRITE_REG(IXGBE_CTRL, ctrl);
+    IXGBE_WRITE_FLUSH();
+ 
+    /* Poll for reset bit to self-clear indicating reset is complete */
+    for (i = 0; i < 10; i++) {
+	udelay(1);
+	ctrl = IXGBE_READ_REG(IXGBE_CTRL);
+	if (!(ctrl & IXGBE_CTRL_RST_MASK))
+	    break;
+    }
+
+    if (ctrl & IXGBE_CTRL_RST_MASK) {
+	status = IXGBE_ERR_RESET_FAILED;
+    }
+    
+    mdelay(50);
+    
+    mac->cached_autoc = IXGBE_READ_REG(IXGBE_AUTOC);
+    autoc2 = IXGBE_READ_REG(IXGBE_AUTOC2);
+    
+    /* Enable link if disabled in NVM */
+    if (autoc2 & IXGBE_AUTOC2_LINK_DISABLE_MASK) {
+	autoc2 &= ~IXGBE_AUTOC2_LINK_DISABLE_MASK;
+	IXGBE_WRITE_REG(IXGBE_AUTOC2, autoc2);
+	IXGBE_WRITE_FLUSH();
+    }
+
+    if (mac->orig_link_settings_stored == false) {
+	mac->orig_autoc = mac->cached_autoc;
+        mac->orig_autoc2 = autoc2;
+        mac->orig_link_settings_stored = true;
+	KPRINTF("%s d\n", __FUNCTION__);
+    }
+
+    ixgbe_get_mac_addr_generic(mac->perm_addr);
+    
+    /*
+     * Store MAC address from RAR0, clear receive address registers, and
+     * clear the multicast table.  Also reset num_rar_entries to 128,
+     * since we modify this value when programming the SAN MAC address.
+     */
+    mac->num_rar_entries = 128;
+    ixgbe_init_rx_addrs_generic();
+}
+
+void ebbrt::IxgbeDriver::ixgbe_probe() {
+    
+  eeprom = (struct ixgbe_eeprom_info*)malloc(sizeof(struct ixgbe_eeprom_info));
+  memset(eeprom, 0, sizeof(struct ixgbe_eeprom_info));
+  
+  mac = (struct ixgbe_mac_info*) malloc(sizeof(struct ixgbe_mac_info));
+  memset(mac, 0, sizeof(struct ixgbe_mac_info));
+  
+  hw = (struct ixgbe_hw *) malloc(sizeof(struct ixgbe_hw));
+  memset(hw, 0, sizeof(struct ixgbe_hw));
+  
+  phy = (struct ixgbe_phy_info*) malloc (sizeof(struct ixgbe_phy_info));
+  memset(phy, 0, sizeof(struct ixgbe_phy_info));
+
+  KPRINTF("%s ", __PRETTY_FUNCTION__);
+  bar0_.Map();  // allocate virtual memory
+  
+  ebbrt::clock::SleepMilli(200);
+  KPRINTF("Sleep 200 ms\n");
+
+  ixgbe_get_invariants_82599();
+
+  ixgbe_init_eeprom_params_generic();
+  hw->mng_fw_enabled = ixgbe_mng_enabled();
+  KPRINTF("mng_fw_enabled = %d\n", hw->mng_fw_enabled);
+
+  IXGBE_WRITE_REG(IXGBE_WUS, ~0);
+  IXGBE_WRITE_REG(IXGBE_WUS+30, ~0);
+  
+  ixgbe_reset_hw_82599();
+}
+
 /**
  *  ixgbe_init_hw_generic - Generic hardware initialization
  *  @hw: pointer to hardware structure
@@ -1184,7 +1644,7 @@ void ebbrt::IxgbeDriver::Init() {
 
   // Wait for DMA initialization
   while (ReadRdrxctlDmaidone() == 0)
-  ;  // TODO: Timeout
+    ;  // TODO: Timeout
 
   // Wait for link to come up
   while (!ReadLinksLinkUp())
@@ -1375,10 +1835,10 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
 
   // setup RX interrupts for queue 0
   auto rcv_vector =
-    event_manager->AllocateVector([this, i]() { ebb_->ReceivePoll(i); });
+      event_manager->AllocateVector([this, i]() { ebb_->ReceivePoll(i); });
   dev_.SetMsixEntry(i * 2, rcv_vector, i);  // TODO: fix
 
-  //auto ii = i / 2;
+  // auto ii = i / 2;
   // if((i % 2) == 0) {
   WriteIvarAlloc0(i, 0);
   WriteIvarAllocval0(i, 0x1 << 7);
