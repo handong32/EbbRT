@@ -1102,7 +1102,7 @@ void ebbrt::IxgbeDriver::StopDevice() {
 }
 
 void ebbrt::IxgbeDriver::GlobalReset() {
-  ebbrt::kprintf("%s ", __PRETTY_FUNCTION__);
+  ebbrt::kprintf("%s \n", __PRETTY_FUNCTION__);
 
   WriteCtrl(0x8);  // Link Reset
   WriteCtrl(0x4000000);  // Device Reset
@@ -1126,6 +1126,7 @@ void ebbrt::IxgbeDriver::IXGBE_WRITE_REG(uint32_t reg, uint32_t value) {
 }
 
 void ebbrt::IxgbeDriver::ixgbe_get_invariants_82599() {
+    ebbrt::kprintf("%s \n", __FUNCTION__);
     mac->mcft_size = IXGBE_82599_MC_TBL_SIZE;
     mac->vft_size = IXGBE_82599_VFT_TBL_SIZE;
     mac->num_rar_entries = IXGBE_82599_RAR_ENTRIES;
@@ -1397,11 +1398,15 @@ s32 ebbrt::IxgbeDriver::ixgbe_get_mac_addr_generic(u8 *mac_addr) {
     rar_high = IXGBE_READ_REG(IXGBE_RAH(0));
     rar_low = IXGBE_READ_REG(IXGBE_RAL(0));
     
-    for (i = 0; i < 4; i++)
+    for (i = 0; i < 4; i++) {
 	mac_addr[i] = (u8)(rar_low >> (i*8));
+	//KPRINTF("%02X ", mac_addr[i]);
+    }
     
-    for (i = 0; i < 2; i++)
+    for (i = 0; i < 2; i++) {
 	mac_addr[i+4] = (u8)(rar_high >> (i*8));
+	//KPRINTF("%02X ", mac_addr[i+4]);
+    }
     
     return 0;
 }
@@ -1428,8 +1433,9 @@ s32 ebbrt::IxgbeDriver::ixgbe_init_rx_addrs_generic() {
      * to the permanent address.
      * Otherwise, use the permanent address from the eeprom.
      */
+    ixgbe_get_mac_addr_generic(mac->addr);
+    KPRINTF(" Keeping Current RAR0 Addr = %02X:%02X:%02X:%02X:%02X:%02X\n", mac->addr[0], mac->addr[1], mac->addr[2], mac->addr[3], mac->addr[4], mac->addr[5]);
     
-    KPRINTF(" Keeping Current RAR0 Addr =%pM\n", mac->addr);
     hw->addr_ctrl.overflow_promisc = 0;
     
     hw->addr_ctrl.rar_used_count = 1;
@@ -1491,8 +1497,10 @@ void ebbrt::IxgbeDriver::ixgbe_reset_hw_82599() {
     ctrl = IXGBE_CTRL_LNK_RST;
     if (!hw->force_full_reset) {
         ixgbe_check_mac_link_generic(&link_speed, &link_up, false);
-	if (link_up)
+	
+	if (link_up) {
 	    ctrl = IXGBE_CTRL_RST;
+	}
     }
 
     ctrl |= IXGBE_READ_REG(IXGBE_CTRL);
@@ -1541,7 +1549,347 @@ void ebbrt::IxgbeDriver::ixgbe_reset_hw_82599() {
     ixgbe_init_rx_addrs_generic();
 }
 
+enum ixgbe_bus_width ixgbe_convert_bus_width(u16 link_status)
+{
+
+    KPRINTF("%s\n", __FUNCTION__);
+
+	switch (link_status & IXGBE_PCI_LINK_WIDTH) {
+	case IXGBE_PCI_LINK_WIDTH_1:
+		return ixgbe_bus_width_pcie_x1;
+	case IXGBE_PCI_LINK_WIDTH_2:
+		return ixgbe_bus_width_pcie_x2;
+	case IXGBE_PCI_LINK_WIDTH_4:
+		return ixgbe_bus_width_pcie_x4;
+	case IXGBE_PCI_LINK_WIDTH_8:
+		return ixgbe_bus_width_pcie_x8;
+	default:
+		return ixgbe_bus_width_unknown;
+	}
+}
+
+enum ixgbe_bus_speed ixgbe_convert_bus_speed(u16 link_status)
+{
+    
+    KPRINTF("%s\n", __FUNCTION__);
+
+	switch (link_status & IXGBE_PCI_LINK_SPEED) {
+	case IXGBE_PCI_LINK_SPEED_2500:
+		return ixgbe_bus_speed_2500;
+	case IXGBE_PCI_LINK_SPEED_5000:
+		return ixgbe_bus_speed_5000;
+	case IXGBE_PCI_LINK_SPEED_8000:
+		return ixgbe_bus_speed_8000;
+	default:
+		return ixgbe_bus_speed_unknown;
+	}
+}
+
+void ebbrt::IxgbeDriver::ixgbe_set_lan_id_multi_port_pcie()
+{
+	u32 reg;
+	
+	KPRINTF("%s\n", __FUNCTION__);
+
+	reg = IXGBE_READ_REG(IXGBE_STATUS);
+        hw->bus.func = (reg & IXGBE_STATUS_LAN_ID) >> IXGBE_STATUS_LAN_ID_SHIFT;
+        hw->bus.lan_id = hw->bus.func;
+
+	/* check for a port swap */
+	reg = IXGBE_READ_REG(IXGBE_FACTPS);
+	if (reg & IXGBE_FACTPS_LFS)
+	    hw->bus.func ^= 0x1;
+}
+
+int ebbrt::IxgbeDriver::ixgbe_enumerate_functions() {
+    KPRINTF("%s \n", __FUNCTION__);
+    return 2;
+}
+
+void ebbrt::IxgbeDriver::ixgbe_get_bus_info_generic() {
+    u16 link_status;
+    KPRINTF("%s\n", __FUNCTION__);
+    
+    hw->bus.type = ixgbe_bus_type_pci_express;
+    
+    /* Get the negotiated link width and speed from PCI config space */
+    link_status = dev_.GetLinkStatus();
+
+    KPRINTF("link_status = 0x%X\n", link_status);
+
+    hw->bus.width = ixgbe_convert_bus_width(link_status);
+    hw->bus.speed = ixgbe_convert_bus_speed(link_status);
+    
+    ixgbe_set_lan_id_multi_port_pcie();
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_read_eerd_buffer_generic(u16 offset,
+						       u16 words, u16 *data) {
+    u32 eerd;
+    s32 status = 0;
+    u32 i;
+    
+    KPRINTF("%s\n", __FUNCTION__);
+    
+    for (i = 0; i < words; i++) {
+	eerd = ((offset + i) << IXGBE_EEPROM_RW_ADDR_SHIFT) |
+	    IXGBE_EEPROM_RW_REG_START;
+	
+	IXGBE_WRITE_REG(IXGBE_EERD, eerd);
+	
+	//status = ixgbe_poll_eerd_eewr_done(hw, IXGBE_NVM_POLL_READ);
+	while((IXGBE_READ_REG(IXGBE_EERD) & IXGBE_EEPROM_RW_REG_DONE) == 0) {
+	}
+	
+	if (status == 0) {
+	    data[i] = (IXGBE_READ_REG(IXGBE_EERD) >>
+		       IXGBE_EEPROM_RW_REG_DATA);
+	}
+    }
+    
+    return status;
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_read_pba_string_generic(u8 *pba_num,
+						      u32 pba_num_size) {
+    s32 ret_val;
+    u16 data;
+    u16 pba_ptr;
+    u16 offset;
+    u16 length;
+    
+    KPRINTF("%s\n", __FUNCTION__);
+    
+    ret_val = ixgbe_read_eerd_buffer_generic(IXGBE_PBANUM0_PTR, 1, &data);
+    ret_val = ixgbe_read_eerd_buffer_generic(IXGBE_PBANUM1_PTR, 1, &pba_ptr);
+
+    /*
+     * if data is not ptr guard the PBA must be in legacy format which
+     * means pba_ptr is actually our second data word for the PBA number
+     * and we can decode it into an ascii string
+     */
+    if (data != IXGBE_PBANUM_PTR_GUARD) {	
+	/* we will need 11 characters to store the PBA */
+	if (pba_num_size < 11) {
+	    return IXGBE_ERR_NO_SPACE;
+	}
+	
+	/* extract hex string from data and pba_ptr */
+	pba_num[0] = (data >> 12) & 0xF;
+	pba_num[1] = (data >> 8) & 0xF;
+	pba_num[2] = (data >> 4) & 0xF;
+	pba_num[3] = data & 0xF;
+	pba_num[4] = (pba_ptr >> 12) & 0xF;
+	pba_num[5] = (pba_ptr >> 8) & 0xF;
+	pba_num[6] = '-';
+	pba_num[7] = 0;
+	pba_num[8] = (pba_ptr >> 4) & 0xF;
+	pba_num[9] = pba_ptr & 0xF;
+	
+	/* put a null character on the end of our string */
+	pba_num[10] = '\0';
+	
+	/* switch all the data but the '-' to hex char */
+	for (offset = 0; offset < 10; offset++) {
+	    if (pba_num[offset] < 0xA)
+		pba_num[offset] += '0';
+	    else if (pba_num[offset] < 0x10)
+		pba_num[offset] += 'A' - 0xA;
+	}
+	
+	return 0;
+    }
+    return 0;
+}
+
+void ebbrt::IxgbeDriver::ixgbe_clear_hw_cntrs_generic() {
+    u16 i = 0;
+
+    KPRINTF("%s\n", __FUNCTION__);
+
+    	IXGBE_READ_REG(IXGBE_CRCERRS);
+	IXGBE_READ_REG(IXGBE_ILLERRC);
+	IXGBE_READ_REG(IXGBE_ERRBC);
+	IXGBE_READ_REG(IXGBE_MSPDC);
+	for (i = 0; i < 8; i++)
+		IXGBE_READ_REG(IXGBE_MPC(i));
+
+	IXGBE_READ_REG(IXGBE_MLFC);
+	IXGBE_READ_REG(IXGBE_MRFC);
+	IXGBE_READ_REG(IXGBE_RLEC);
+	IXGBE_READ_REG(IXGBE_LXONTXC);
+	IXGBE_READ_REG(IXGBE_LXOFFTXC);
+	if (mac->type >= ixgbe_mac_82599EB) {
+		IXGBE_READ_REG(IXGBE_LXONRXCNT);
+		IXGBE_READ_REG(IXGBE_LXOFFRXCNT);
+	} else {
+		IXGBE_READ_REG(IXGBE_LXONRXC);
+		IXGBE_READ_REG(IXGBE_LXOFFRXC);
+	}
+
+	for (i = 0; i < 8; i++) {
+		IXGBE_READ_REG(IXGBE_PXONTXC(i));
+		IXGBE_READ_REG(IXGBE_PXOFFTXC(i));
+		if (mac->type >= ixgbe_mac_82599EB) {
+			IXGBE_READ_REG(IXGBE_PXONRXCNT(i));
+			IXGBE_READ_REG(IXGBE_PXOFFRXCNT(i));
+		} else {
+			IXGBE_READ_REG(IXGBE_PXONRXC(i));
+			IXGBE_READ_REG(IXGBE_PXOFFRXC(i));
+		}
+	}
+	if (mac->type >= ixgbe_mac_82599EB)
+		for (i = 0; i < 8; i++)
+			IXGBE_READ_REG(IXGBE_PXON2OFFCNT(i));
+	IXGBE_READ_REG(IXGBE_PRC64);
+	IXGBE_READ_REG(IXGBE_PRC127);
+	IXGBE_READ_REG(IXGBE_PRC255);
+	IXGBE_READ_REG(IXGBE_PRC511);
+	IXGBE_READ_REG(IXGBE_PRC1023);
+	IXGBE_READ_REG(IXGBE_PRC1522);
+	IXGBE_READ_REG(IXGBE_GPRC);
+	IXGBE_READ_REG(IXGBE_BPRC);
+	IXGBE_READ_REG(IXGBE_MPRC);
+	IXGBE_READ_REG(IXGBE_GPTC);
+	IXGBE_READ_REG(IXGBE_GORCL);
+	IXGBE_READ_REG(IXGBE_GORCH);
+	IXGBE_READ_REG(IXGBE_GOTCL);
+	IXGBE_READ_REG(IXGBE_GOTCH);
+
+	IXGBE_READ_REG(IXGBE_RUC);
+	IXGBE_READ_REG(IXGBE_RFC);
+	IXGBE_READ_REG(IXGBE_ROC);
+	IXGBE_READ_REG(IXGBE_RJC);
+	IXGBE_READ_REG(IXGBE_MNGPRC);
+	IXGBE_READ_REG(IXGBE_MNGPDC);
+	IXGBE_READ_REG(IXGBE_MNGPTC);
+	IXGBE_READ_REG(IXGBE_TORL);
+	IXGBE_READ_REG(IXGBE_TORH);
+	IXGBE_READ_REG(IXGBE_TPR);
+	IXGBE_READ_REG(IXGBE_TPT);
+	IXGBE_READ_REG(IXGBE_PTC64);
+	IXGBE_READ_REG(IXGBE_PTC127);
+	IXGBE_READ_REG(IXGBE_PTC255);
+	IXGBE_READ_REG(IXGBE_PTC511);
+	IXGBE_READ_REG(IXGBE_PTC1023);
+	IXGBE_READ_REG(IXGBE_PTC1522);
+	IXGBE_READ_REG(IXGBE_MPTC);
+	IXGBE_READ_REG(IXGBE_BPTC);
+	for (i = 0; i < 16; i++) {
+		IXGBE_READ_REG(IXGBE_QPRC(i));
+		IXGBE_READ_REG(IXGBE_QPTC(i));
+		IXGBE_READ_REG(IXGBE_QBRC_L(i));
+		IXGBE_READ_REG(IXGBE_QBRC_H(i));
+		IXGBE_READ_REG(IXGBE_QBTC_L(i));
+		IXGBE_READ_REG(IXGBE_QBTC_H(i));
+		IXGBE_READ_REG(IXGBE_QPRDC(i));
+	}
+	
+
+}
+
+void ebbrt::IxgbeDriver::ixgbe_clear_vfta_generic() {
+    u32 offset;
+    
+    KPRINTF("%s \n", __FUNCTION__);
+    
+    for (offset = 0; offset < mac->vft_size; offset++)
+	IXGBE_WRITE_REG(IXGBE_VFTA(offset), 0);
+    
+    for (offset = 0; offset < IXGBE_VLVF_ENTRIES; offset++) {
+	IXGBE_WRITE_REG(IXGBE_VLVF(offset), 0);
+	IXGBE_WRITE_REG(IXGBE_VLVFB(offset*2), 0);
+	IXGBE_WRITE_REG(IXGBE_VLVFB((offset*2)+1), 0);
+    }
+}
+
+void ebbrt::IxgbeDriver::ixgbe_start_hw_generic() {
+    
+    u32 ctrl_ext;
+    
+    KPRINTF("%s\n", __FUNCTION__);
+    
+    /* Set the media type */
+    phy->media_type = ixgbe_media_type_fiber;
+
+    /* Identify the PHY */
+    ixgbe_identify_phy_82599();
+    
+    /* Clear the VLAN filter table */
+    ixgbe_clear_vfta_generic();
+
+    /* Clear statistics registers */
+    ixgbe_clear_hw_cntrs_generic();
+ 
+    /* Set No Snoop Disable */
+    ctrl_ext = IXGBE_READ_REG(IXGBE_CTRL_EXT);
+    ctrl_ext |= IXGBE_CTRL_EXT_NS_DIS;
+    IXGBE_WRITE_REG(IXGBE_CTRL_EXT, ctrl_ext);
+    IXGBE_WRITE_FLUSH();
+
+    /* Clear adapter stopped flag */
+    hw->adapter_stopped = false;
+}
+
+void ebbrt::IxgbeDriver::ixgbe_start_hw_gen2() {
+    u32 i;
+    u32 regval;
+    
+    KPRINTF("%s\n", __FUNCTION__);
+    
+    /* Clear the rate limiters */
+    for (i = 0; i < mac->max_tx_queues; i++) {
+	IXGBE_WRITE_REG(IXGBE_RTTDQSEL, i);
+	IXGBE_WRITE_REG(IXGBE_RTTBCNRC, 0);
+    }
+    IXGBE_WRITE_FLUSH();
+
+    /* Disable relaxed ordering */
+    for (i = 0; i < mac->max_tx_queues; i++) {
+	regval = IXGBE_READ_REG(IXGBE_DCA_TXCTRL_82599(i));
+	regval &= ~IXGBE_DCA_TXCTRL_DESC_WRO_EN;
+	IXGBE_WRITE_REG(IXGBE_DCA_TXCTRL_82599(i), regval);
+    }
+    
+    for (i = 0; i < mac->max_rx_queues; i++) {
+	regval = IXGBE_READ_REG(IXGBE_DCA_RXCTRL(i));
+	regval &= ~(IXGBE_DCA_RXCTRL_DATA_WRO_EN |
+		    IXGBE_DCA_RXCTRL_HEAD_WRO_EN);
+	IXGBE_WRITE_REG(IXGBE_DCA_RXCTRL(i), regval);
+    }
+}
+
+s32 ebbrt::IxgbeDriver::ixgbe_start_hw_82599() {
+    
+    KPRINTF("%s\n", __FUNCTION__);
+    
+    ixgbe_start_hw_generic();
+
+    ixgbe_start_hw_gen2();
+
+    /* We need to run link autotry after the driver loads */
+    mac->autotry_restart = true;
+    mac->rx_pb_size = IXGBE_82599_RX_PB_SIZE;
+
+}
+
+void ixgbe_disable_tx_laser_multispeed_fiber() {
+    
+    KPRINTF("%s\n", __FUNCTION__);
+    
+    u32 esdp_reg = IXGBE_READ_REG(IXGBE_ESDP);
+    
+    /* Disable tx laser; allow 100us to go dark per spec */
+    esdp_reg |= IXGBE_ESDP_SDP3;
+    IXGBE_WRITE_REG(IXGBE_ESDP, esdp_reg);
+    IXGBE_WRITE_FLUSH();
+    udelay(100);
+}
+
 void ebbrt::IxgbeDriver::ixgbe_probe() {
+    
+    int expected_gts;
+    u8 part_str[IXGBE_PBANUM_LENGTH];
     
   eeprom = (struct ixgbe_eeprom_info*)malloc(sizeof(struct ixgbe_eeprom_info));
   memset(eeprom, 0, sizeof(struct ixgbe_eeprom_info));
@@ -1555,7 +1903,7 @@ void ebbrt::IxgbeDriver::ixgbe_probe() {
   phy = (struct ixgbe_phy_info*) malloc (sizeof(struct ixgbe_phy_info));
   memset(phy, 0, sizeof(struct ixgbe_phy_info));
 
-  KPRINTF("%s ", __PRETTY_FUNCTION__);
+  KPRINTF("%s \n", __PRETTY_FUNCTION__);
   bar0_.Map();  // allocate virtual memory
   
   ebbrt::clock::SleepMilli(200);
@@ -1568,9 +1916,25 @@ void ebbrt::IxgbeDriver::ixgbe_probe() {
   KPRINTF("mng_fw_enabled = %d\n", hw->mng_fw_enabled);
 
   IXGBE_WRITE_REG(IXGBE_WUS, ~0);
-  IXGBE_WRITE_REG(IXGBE_WUS+30, ~0);
+  IXGBE_WRITE_REG(IXGBE_WUS+32, ~0);
   
   ixgbe_reset_hw_82599();
+
+  //init_interrupt_scheme()
+
+  ixgbe_get_bus_info_generic();
+  expected_gts = ixgbe_enumerate_functions() * 10;
+  ixgbe_read_pba_string_generic(part_str, IXGBE_PBANUM_LENGTH);
+  mac->type = ixgbe_mac_82599EB;
+  KPRINTF("MAC: %d, PHY: %d, PBA No: %s\n",
+	  mac->type, phy->type, part_str);
+  
+  /* reset the hardware with the new settings */
+  ixgbe_start_hw_82599();
+
+  /* power down the optics for 82599 SFP+ fiber */
+  ixgbe_disable_tx_laser_multispeed_fiber();
+  
 }
 
 /**
@@ -1586,7 +1950,7 @@ void ebbrt::IxgbeDriver::ixgbe_probe() {
 void ebbrt::IxgbeDriver::Init() {
   uint64_t d_mac;
 
-  ebbrt::kprintf("%s ", __PRETTY_FUNCTION__);
+  ebbrt::kprintf("%s \n", __PRETTY_FUNCTION__);
   bar0_.Map();  // allocate virtual memory
   ebbrt::clock::SleepMilli(200);
   ebbrt::kprintf("Sleep 200 ms\n");

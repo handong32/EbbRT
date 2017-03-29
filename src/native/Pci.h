@@ -31,6 +31,8 @@ class Function {
   uint8_t GetHeaderType() const;
   uint8_t GetBist() const;
   uint8_t GetFunc() const;
+  uint8_t GetSecondaryBusNum() const;
+  uint16_t GetLinkStatus() const;
   
   operator bool() const;
   bool IsMultifunc() const;
@@ -56,7 +58,9 @@ class Function {
   static const constexpr uint8_t kLatencyTimerAddr = 0x0D;
   static const constexpr uint8_t kHeaderTypeAddr = 0x0E;
   static const constexpr uint8_t kBistAddr = 0x0F;
-  
+  static const constexpr uint8_t kSecondaryBusAddr = 0x19;
+  static const constexpr uint8_t kLinkStatus = 0xB2;
+
   static const constexpr uint16_t kCommandBusMaster = 1 << 2;
   static const constexpr uint16_t kCommandIntDisable = 1 << 10;
 

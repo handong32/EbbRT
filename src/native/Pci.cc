@@ -22,23 +22,23 @@ const constexpr uint8_t kPciDeviceOffset = 11;
 const constexpr uint8_t kPciFuncOffset = 8;
 
 void PciSetAddr(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset) {
-ebbrt::io::Out32(kPciAddressPort, kPciAddressEnable | (bus << kPciBusOffset) |
+  ebbrt::io::Out32(kPciAddressPort, kPciAddressEnable | (bus << kPciBusOffset) |
                                         (device << kPciDeviceOffset) |
                                         (func << kPciFuncOffset) | offset);
 }
 
 uint8_t PciRead8(uint8_t bus, uint8_t dev, uint8_t fun, uint8_t reg) {
-    PciSetAddr(bus, dev, fun, reg);
-    return ebbrt::io::In8(kPciDataPort + (reg & 3));
+  PciSetAddr(bus, dev, fun, reg);
+  return ebbrt::io::In8(kPciDataPort + (reg & 3));
 }
 uint16_t PciRead16(uint8_t bus, uint8_t dev, uint8_t fun, uint8_t reg) {
-    PciSetAddr(bus, dev, fun, reg);
-    return ebbrt::io::In16(kPciDataPort + (reg & 2));
+  PciSetAddr(bus, dev, fun, reg);
+  return ebbrt::io::In16(kPciDataPort + (reg & 2));
 }
 
 uint32_t PciRead32(uint8_t bus, uint8_t dev, uint8_t fun, uint8_t reg) {
-    PciSetAddr(bus, dev, fun, reg);
-    return ebbrt::io::In32(kPciDataPort);
+  PciSetAddr(bus, dev, fun, reg);
+  return ebbrt::io::In32(kPciDataPort);
 }
 
 void PciWrite16(uint8_t bus, uint8_t dev, uint8_t fun, uint8_t reg,
@@ -49,8 +49,8 @@ void PciWrite16(uint8_t bus, uint8_t dev, uint8_t fun, uint8_t reg,
 
 void PciWrite32(uint8_t bus, uint8_t dev, uint8_t fun, uint8_t reg,
                 uint32_t val) {
-    PciSetAddr(bus, dev, fun, reg);
-    ebbrt::io::Out32(kPciDataPort, val);
+  PciSetAddr(bus, dev, fun, reg);
+  ebbrt::io::Out32(kPciDataPort, val);
 }
 
 ebbrt::ExplicitlyConstructed<std::vector<ebbrt::pci::Device>> devices;
@@ -69,15 +69,16 @@ void EnumerateBus(uint8_t bus) {
       dev = ebbrt::pci::Function(bus, device, func);
       if (dev)
         continue;
-      
+
       dev.DumpAddress();
       dev.DumpInfo();
-      
-      if (dev.IsBridge()) 
-      {
-	  continue;
+
+      if (dev.IsBridge()) {
+	  ebbrt::kprintf("bridge %d\n", dev.GetSecondaryBusNum());
+	  EnumerateBus(dev.GetSecondaryBusNum());
+        continue;
       } else {
-	  devices->emplace_back(bus, device, func);
+        devices->emplace_back(bus, device, func);
       }
     }
   }
@@ -99,13 +100,13 @@ void EnumerateAllBuses() {
   }
 }
 
-} //namespace
+}  // namespace
 
 void ebbrt::pci::Init() {
-    devices.construct();
-    driver_probes.construct();    
-    EnumerateAllBuses();
-    EnumerateBus(0x82);   
+  devices.construct();
+  driver_probes.construct();
+  EnumerateAllBuses();
+  EnumerateBus(0x82);
 }
 
 void ebbrt::pci::RegisterProbe(std::function<bool(pci::Device&)> probe) {
@@ -158,20 +159,24 @@ uint8_t ebbrt::pci::Function::GetClassCode() const {
   return Read8(kClassCodeAddr);
 }
 
-uint8_t ebbrt::pci::Function::GetFunc() const {
-  return func_;
-}
+uint8_t ebbrt::pci::Function::GetFunc() const { return func_; }
 
 uint8_t ebbrt::pci::Function::GetSubclass() const {
   return Read8(kSubclassAddr);
 }
 
-uint8_t ebbrt::pci::Function::GetProgIf() const {
-  return Read8(kProgIfAddr);
-}
+uint8_t ebbrt::pci::Function::GetProgIf() const { return Read8(kProgIfAddr); }
 
 uint8_t ebbrt::pci::Function::GetHeaderType() const {
   return Read8(kHeaderTypeAddr) & ~kHeaderMultifuncMask;
+}
+
+uint8_t ebbrt::pci::Function::GetSecondaryBusNum() const {
+  return Read8(kSecondaryBusAddr);
+}
+
+uint16_t ebbrt::pci::Function::GetLinkStatus() const {
+    return Read16(kLinkStatus);
 }
 
 ebbrt::pci::Function::operator bool() const { return GetVendorId() == 0xffff; }
@@ -209,8 +214,8 @@ void ebbrt::pci::Function::DumpAddress() const {
 }
 
 void ebbrt::pci::Function::DumpInfo() const {
-    kprintf("Vendor ID: 0x%x  ", GetVendorId());
-    kprintf("Device ID: 0x%x\n", GetDeviceId());
+  kprintf("Vendor ID: 0x%x  ", GetVendorId());
+  kprintf("Device ID: 0x%x\n", GetDeviceId());
 }
 
 ebbrt::pci::Bar::Bar(pci::Device& dev, uint32_t bar_val, uint8_t idx)
@@ -264,7 +269,8 @@ void ebbrt::pci::Bar::Map() {
   auto page = vmem_allocator->Alloc(npages);
   vaddr_ = reinterpret_cast<void*>(page.ToAddr());
   kbugon(page == Pfn::None(), "Failed to allocate virtual pages for mmio\n");
-  //ebbrt::kprintf("%s - vaddr:%p addr:%p size:%d, Pfn::Down(addr_):%p\n", __PRETTY_FUNCTION__, vaddr_, addr_, size_, Pfn::Down(addr_));
+  // ebbrt::kprintf("%s - vaddr:%p addr:%p size:%d, Pfn::Down(addr_):%p\n",
+  // __PRETTY_FUNCTION__, vaddr_, addr_, size_, Pfn::Down(addr_));
   vmem::MapMemory(page, Pfn::Down(addr_), size_);
 }
 

@@ -96,7 +96,17 @@ class IxgbeDriver : public EthernetDevice {
   s32 ixgbe_init_uta_tables_generic();
 
   s32 ixgbe_stop_adapter_generic();
-
+  void ixgbe_get_bus_info_generic();
+  void ixgbe_set_lan_id_multi_port_pcie();
+  int ixgbe_enumerate_functions();
+  s32 ixgbe_read_pba_string_generic(u8 *pba_num, u32 pba_num_size);
+  s32 ixgbe_read_eerd_buffer_generic(u16 offset, u16 words, u16 *data);
+  s32 ixgbe_start_hw_82599();
+  void ixgbe_start_hw_generic();
+  void ixgbe_clear_vfta_generic();
+  void ixgbe_clear_hw_cntrs_generic();
+  void ixgbe_start_hw_gen2();
+  
   void PhyInit();
   void StopDevice();
   void GlobalReset();
