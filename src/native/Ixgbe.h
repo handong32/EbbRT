@@ -394,6 +394,20 @@ typedef u32 ixgbe_link_speed;
 
 #define IXGBE_ESDP_SDP3 0x00000008 /* SDP3 Data Value */
 
+/* Transmit DMA registers */
+#define IXGBE_TDBAL(_i) (0x06000 + ((_i) * 0x40)) /* 32 of these (0-31)*/
+#define IXGBE_TDBAH(_i) (0x06004 + ((_i) * 0x40))
+#define IXGBE_TDLEN(_i) (0x06008 + ((_i) * 0x40))
+#define IXGBE_TDH(_i)   (0x06010 + ((_i) * 0x40))
+#define IXGBE_TDT(_i)   (0x06018 + ((_i) * 0x40))
+#define IXGBE_TXDCTL(_i) (0x06028 + ((_i) * 0x40))
+#define IXGBE_TDWBAL(_i) (0x06038 + ((_i) * 0x40))
+#define IXGBE_TDWBAH(_i) (0x0603C + ((_i) * 0x40))
+#define IXGBE_DTXCTL    0x07E00
+
+#define IXGBE_DMATXCTL      0x04A80
+#define IXGBE_DMATXCTL_TE       0x1 /* Transmit Enable */
+
 /* Autonegotiation advertised speeds */
 typedef u32 ixgbe_autoneg_advertised;
 

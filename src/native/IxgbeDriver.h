@@ -79,6 +79,7 @@ class IxgbeDriver : public EthernetDevice {
   void DeviceInfo();
   void Init();
   void ixgbe_probe();
+  void ixgbe_open();
   void ixgbe_init_eeprom_params_generic();
   void ixgbe_get_invariants_82599();
   bool ixgbe_mng_enabled();
@@ -106,6 +107,13 @@ class IxgbeDriver : public EthernetDevice {
   void ixgbe_clear_vfta_generic();
   void ixgbe_clear_hw_cntrs_generic();
   void ixgbe_start_hw_gen2();
+  void ixgbe_disable_tx_laser_multispeed_fiber();
+  void ixgbe_setup_all_tx_resources();
+  void ixgbe_configure_tx();
+  void ixgbe_configure_tx_ring();
+  void ixgbe_up_complete();
+  void ixgbe_get_hw_control();
+  void ixgbe_enable_tx_laser_multispeed_fiber();
   
   void PhyInit();
   void StopDevice();
@@ -275,6 +283,16 @@ class IxgbeDriver : public EthernetDevice {
   struct ixgbe_mac_info *mac;
   struct ixgbe_hw *hw;
   struct ixgbe_phy_info *phy;
+
+  rdesc_legacy_t* rx_ring2;
+  size_t rx_head2;
+  size_t rx_tail2;
+  size_t rx_size2;
+  
+  tdesc_legacy_t* tx_ring2;
+  size_t tx_head2;
+  size_t tx_tail2;
+  size_t tx_size2;
   
   friend class IxgbeDriverRep;
 };  // class IxgbeDriver

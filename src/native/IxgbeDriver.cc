@@ -6,6 +6,10 @@
 
 #include "../StaticIOBuf.h"
 #include "../UniqueIOBuf.h"
+#include "../Align.h"
+#include "Fls.h"
+#include "PageAllocator.h"
+#include "Pfn.h"
 #include "Clock.h"
 #include "Debug.h"
 #include "EventManager.h"
@@ -13,11 +17,15 @@
 
 #include <atomic>
 
+static char txbuf2[128];
+
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
 
   // ixgbe_dev->Init();
   ixgbe_dev->ixgbe_probe();
+  ixgbe_dev->ixgbe_open();
+  
   ixgbe_dev->ebb_ =
       IxgbeDriverRep::Create(ixgbe_dev, ebb_allocator->AllocateLocal());
 
@@ -26,7 +34,7 @@ void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   ebbrt::kprintf("intel 82599 card initialzed\n");
 
   // Send test packet
-  // ixgbe_dev->SendPacket(0);
+  ixgbe_dev->SendPacket(0);
 
   /*while (1) {
     // ebbrt::clock::SleepMilli(10000);
@@ -139,81 +147,132 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
 }
 
 void ebbrt::IxgbeDriver::SendPacket(uint32_t n) {
-  auto tlen = 0;
-  auto txbuf = (uint8_t*)malloc(sizeof(uint8_t) * 60);
+    u32 tlen = 0;
 
-  // dest 90:e2:ba:84:d7:38
-  txbuf[tlen++] = 0x90;
-  txbuf[tlen++] = 0xE2;
-  txbuf[tlen++] = 0xBA;
-  txbuf[tlen++] = 0x84;
-  txbuf[tlen++] = 0xD7;
-  txbuf[tlen++] = 0x38;
+    KPRINTF("%s\n", __FUNCTION__);
 
-  // src
-  txbuf[tlen++] = 0x90;
-  txbuf[tlen++] = 0xE2;
-  txbuf[tlen++] = 0xBA;
-  txbuf[tlen++] = 0x82;
-  txbuf[tlen++] = 0x33;
-  txbuf[tlen++] = 0x24;
+    // dest 90:e2:ba:84:d7:38
+    txbuf2[tlen++] = 0xFF;
+    txbuf2[tlen++] = 0xFF;
+    txbuf2[tlen++] = 0xFF;
+    txbuf2[tlen++] = 0xFF;
+    txbuf2[tlen++] = 0xFF;
+    txbuf2[tlen++] = 0xFF;
+    
+    // src
+    txbuf2[tlen++] = 0x90;
+    txbuf2[tlen++] = 0xE2;
+    txbuf2[tlen++] = 0xBA;
+    txbuf2[tlen++] = 0x82;
+    txbuf2[tlen++] = 0x33;
+    txbuf2[tlen++] = 0x24;
+    
+    // eth type
+    txbuf2[tlen++] = 0x08;
+    txbuf2[tlen++] = 0x00;
+    
+    // payload
+    txbuf2[tlen++] = 0xDE;
+    txbuf2[tlen++] = 0xAD;
+    txbuf2[tlen++] = 0xBE;
+    txbuf2[tlen++] = 0xFF;
+    
+    txbuf2[tlen++] = 0xDE;
+    txbuf2[tlen++] = 0xAD;
+    txbuf2[tlen++] = 0xBE;
+    txbuf2[tlen++] = 0xFF;
 
-  // eth type
-  txbuf[tlen++] = 0x08;
-  txbuf[tlen++] = 0x00;
+    for (auto i = tlen; i < 60; i++) {
+	txbuf2[i] = 0x22;
+    }
 
-  // payload
-  txbuf[tlen++] = 0xDE;
-  txbuf[tlen++] = 0xAD;
-  txbuf[tlen++] = 0xBE;
-  txbuf[tlen++] = 0xFF;
+    tx_ring2->buffer_address = reinterpret_cast<uint64_t>(txbuf2);
+    tx_ring2->length = 60;
+    tx_ring2->eop = 1;
+    tx_ring2->rs = 1;
+    
+    tx_tail2 += 1;
+    
+    KPRINTF("%p %p\n", txbuf2, tx_ring2->buffer_address);
+    
+    IXGBE_WRITE_REG(IXGBE_TDT(n), tx_tail2);
 
-  txbuf[tlen++] = 0xDE;
-  txbuf[tlen++] = 0xAD;
-  txbuf[tlen++] = 0xBE;
-  txbuf[tlen++] = 0xFF;
 
-  for (auto i = tlen; i < 60; i++) {
-    txbuf[i] = 0x22;
-  }
+  // auto tlen = 0;
+  // auto txbuf = (uint8_t*)malloc(sizeof(uint8_t) * 60);
 
-  ebbrt::kprintf("%s\n", __PRETTY_FUNCTION__);
-  for (auto i = 0; i < 60; i++) {
-    ebbrt::kprintf("%02X ", txbuf[i]);
-  }
-  ebbrt::kprintf("\n\n");
+  // // dest 90:e2:ba:84:d7:38
+  // txbuf[tlen++] = 0x90;
+  // txbuf[tlen++] = 0xE2;
+  // txbuf[tlen++] = 0xBA;
+  // txbuf[tlen++] = 0x84;
+  // txbuf[tlen++] = 0xD7;
+  // txbuf[tlen++] = 0x38;
 
-  auto txphys = reinterpret_cast<uint64_t>(txbuf);
-  auto tail = ixgq->tx_tail;
-  // update buffer address for descriptor
-  ixgq->tx_ring[tail].buffer_address = txphys;
-  ixgq->tx_ring[tail].length = 60;
-  ixgq->tx_ring[tail].eop = 1;  // indicate end of packet
-  ixgq->tx_ring[tail].rs =
-      1;  // so that hw will modify dd bit after packet transmitted
+  // // src
+  // txbuf[tlen++] = 0x90;
+  // txbuf[tlen++] = 0xE2;
+  // txbuf[tlen++] = 0xBA;
+  // txbuf[tlen++] = 0x82;
+  // txbuf[tlen++] = 0x33;
+  // txbuf[tlen++] = 0x24;
 
-  ebbrt::kprintf("taddr - %p %p len:%d\n", txbuf,
-                 ixgq->tx_ring[tail].buffer_address,
-                 ixgq->tx_ring[tail].length);
+  // // eth type
+  // txbuf[tlen++] = 0x08;
+  // txbuf[tlen++] = 0x00;
 
-  // bump tx_tail
-  ixgq->tx_tail = (tail + 1) % ixgq->tx_size;
-  WriteTdt(n, ixgq->tx_tail);  // indicates position beyond last descriptor hw
-  // can process
+  // // payload
+  // txbuf[tlen++] = 0xDE;
+  // txbuf[tlen++] = 0xAD;
+  // txbuf[tlen++] = 0xBE;
+  // txbuf[tlen++] = 0xFF;
 
-  auto head = ixgq->tx_head;
-  // std::atomic_thread_fence(std::memory_order_seq_cst);
-  ebbrt::kprintf("dd = %d\n", ixgq->tx_ring[head].dd);
-  while (ixgq->tx_ring[head].dd == 0) {
-  }  // hw will transmit packet pointed by head, after tranmission, dd bit is
-  // set and head is incremented, finish processing when head == tail
+  // txbuf[tlen++] = 0xDE;
+  // txbuf[tlen++] = 0xAD;
+  // txbuf[tlen++] = 0xBE;
+  // txbuf[tlen++] = 0xFF;
 
-  // header should be incremented by hw, need to update tx_head
-  // ebbrt::kprintf("header = %d, %d\n", head, ReadTdh(n));
-  ixgq->tx_head = (head + 1) % ixgq->tx_size;
+  // for (auto i = tlen; i < 60; i++) {
+  //   txbuf[i] = 0x22;
+  // }
 
-  ebbrt::kprintf("TX dma complete - tx_head = %d tx_tail = %d\n", ixgq->tx_head,
-                 ixgq->tx_tail);
+  // ebbrt::kprintf("%s\n", __PRETTY_FUNCTION__);
+  // for (auto i = 0; i < 60; i++) {
+  //   ebbrt::kprintf("%02X ", txbuf[i]);
+  // }
+  // ebbrt::kprintf("\n\n");
+
+  // auto txphys = reinterpret_cast<uint64_t>(txbuf);
+  // auto tail = ixgq->tx_tail;
+  // // update buffer address for descriptor
+  // ixgq->tx_ring[tail].buffer_address = txphys;
+  // ixgq->tx_ring[tail].length = 60;
+  // ixgq->tx_ring[tail].eop = 1;  // indicate end of packet
+  // ixgq->tx_ring[tail].rs =
+  //     1;  // so that hw will modify dd bit after packet transmitted
+
+  // ebbrt::kprintf("taddr - %p %p len:%d\n", txbuf,
+  //                ixgq->tx_ring[tail].buffer_address,
+  //                ixgq->tx_ring[tail].length);
+
+  // // bump tx_tail
+  // ixgq->tx_tail = (tail + 1) % ixgq->tx_size;
+  // WriteTdt(n, ixgq->tx_tail);  // indicates position beyond last descriptor hw
+  // // can process
+
+  // auto head = ixgq->tx_head;
+  // // std::atomic_thread_fence(std::memory_order_seq_cst);
+  // ebbrt::kprintf("dd = %d\n", ixgq->tx_ring[head].dd);
+  // while (ixgq->tx_ring[head].dd == 0) {
+  // }  // hw will transmit packet pointed by head, after tranmission, dd bit is
+  // // set and head is incremented, finish processing when head == tail
+
+  // // header should be incremented by hw, need to update tx_head
+  // // ebbrt::kprintf("header = %d, %d\n", head, ReadTdh(n));
+  // ixgq->tx_head = (head + 1) % ixgq->tx_size;
+
+  // ebbrt::kprintf("TX dma complete - tx_head = %d tx_tail = %d\n", ixgq->tx_head,
+  //                ixgq->tx_tail);
 }
 
 /*
@@ -1385,7 +1444,8 @@ s32 ebbrt::IxgbeDriver::ixgbe_check_mac_link_generic(ixgbe_link_speed *speed,
     
     KPRINTF("%s link_up:%d speed:0x%X\n", __FUNCTION__, *link_up, *speed);
     
-    return 0;
+    if(*link_up) return 1;
+    else return 0;
 }
 
 s32 ebbrt::IxgbeDriver::ixgbe_get_mac_addr_generic(u8 *mac_addr) {
@@ -1465,7 +1525,7 @@ void ebbrt::IxgbeDriver::ixgbe_reset_hw_82599() {
     s32 status;
     u32 ctrl, i, autoc2;
     u32 curr_lms;
-    bool link_up = false;
+    bool link_up = false;    
 
     KPRINTF("%s\n", __FUNCTION__);
 
@@ -1873,7 +1933,7 @@ s32 ebbrt::IxgbeDriver::ixgbe_start_hw_82599() {
 
 }
 
-void ixgbe_disable_tx_laser_multispeed_fiber() {
+void ebbrt::IxgbeDriver::ixgbe_disable_tx_laser_multispeed_fiber() {
     
     KPRINTF("%s\n", __FUNCTION__);
     
@@ -1933,8 +1993,117 @@ void ebbrt::IxgbeDriver::ixgbe_probe() {
   ixgbe_start_hw_82599();
 
   /* power down the optics for 82599 SFP+ fiber */
-  ixgbe_disable_tx_laser_multispeed_fiber();
+  //ixgbe_disable_tx_laser_multispeed_fiber();
   
+}
+
+void ebbrt::IxgbeDriver::ixgbe_setup_all_tx_resources() {
+    // TX
+    auto sz = align::Up(sizeof(tdesc_legacy_t) * NTXDESCS, 4096); //align up to 4K
+    auto order = Fls(sz - 1) - pmem::kPageShift + 1;
+    auto page = page_allocator->Alloc(order);
+    kbugon(page == Pfn::None(), "ixgbe: page allocation failed");
+    auto addr = reinterpret_cast<void*>(page.ToAddr());
+    memset(addr, 0, sz);
+    
+    tx_ring2 = static_cast<tdesc_legacy_t*>(addr); //(tdesc_legacy_t*)malloc(tx_size);
+    tx_head2 = 0;
+    tx_tail2 = 0;
+    tx_size2 = sz;
+}
+
+void ebbrt::IxgbeDriver::ixgbe_configure_tx_ring() {
+    u32 txdctl = IXGBE_TXDCTL_ENABLE;
+    u32 reg_idx = 0;
+    
+    ebbrt::kprintf("%s \n", __FUNCTION__);
+    
+    /* disable queue to avoid issues while updating state */
+    IXGBE_WRITE_REG(IXGBE_TXDCTL(reg_idx), 0);
+    IXGBE_WRITE_FLUSH();
+
+    uint64_t txaddr = reinterpret_cast<uint64_t>(tx_ring2);
+    uint32_t txaddrl = txaddr & 0xFFFFFFFF;
+    uint32_t txaddrh = txaddr >> 32;
+    ebbrt::kprintf("tx_ring2: %p txaddr: %p txaddrl: %p txaddrh: %p\n", tx_ring2, txaddr, txaddrl,
+		   txaddrh);
+
+    IXGBE_WRITE_REG(IXGBE_TDBAL(reg_idx), txaddrl);
+    IXGBE_WRITE_REG(IXGBE_TDBAH(reg_idx), txaddrh);
+    IXGBE_WRITE_REG(IXGBE_TDLEN(reg_idx), tx_size2);
+    IXGBE_WRITE_REG(IXGBE_TDH(reg_idx), 0);
+    IXGBE_WRITE_REG(IXGBE_TDT(reg_idx), 0);
+
+    /* enable queue */
+    IXGBE_WRITE_REG(IXGBE_TXDCTL(reg_idx), txdctl);
+ 
+    /* poll to verify queue is enabled */
+    while(!(IXGBE_READ_REG(IXGBE_TXDCTL(reg_idx)) & IXGBE_TXDCTL_ENABLE)) {
+	udelay(2000);
+    }
+}
+
+void ebbrt::IxgbeDriver::ixgbe_configure_tx() {
+    u32 dmatxctl;
+
+    ebbrt::kprintf("%s \n", __FUNCTION__);
+
+    dmatxctl = IXGBE_READ_REG(IXGBE_DMATXCTL);
+    dmatxctl |= IXGBE_DMATXCTL_TE;
+    IXGBE_WRITE_REG(IXGBE_DMATXCTL, dmatxctl);
+
+    ixgbe_configure_tx_ring();
+}
+
+void ebbrt::IxgbeDriver::ixgbe_enable_tx_laser_multispeed_fiber()
+{
+    u32 esdp_reg = IXGBE_READ_REG(IXGBE_ESDP);
+    
+    ebbrt::kprintf("%s \n", __FUNCTION__);
+
+    /* Enable tx laser; allow 100ms to light up */
+    esdp_reg &= ~IXGBE_ESDP_SDP3;
+    IXGBE_WRITE_REG(IXGBE_ESDP, esdp_reg);
+    IXGBE_WRITE_FLUSH();
+    mdelay(100);
+}
+
+void ebbrt::IxgbeDriver::ixgbe_get_hw_control() {
+    
+    u32 ctrl_ext;
+    
+    ebbrt::kprintf("%s \n", __FUNCTION__);
+    
+    /* Let firmware know the driver has taken over */
+    ctrl_ext = IXGBE_READ_REG(IXGBE_CTRL_EXT);
+    IXGBE_WRITE_REG(IXGBE_CTRL_EXT,
+		    ctrl_ext | IXGBE_CTRL_EXT_DRV_LOAD);
+}
+
+void ebbrt::IxgbeDriver::ixgbe_up_complete() {
+    ebbrt::kprintf("%s \n", __FUNCTION__);
+
+    ixgbe_get_hw_control();
+    //ixgbe_enable_tx_laser_multispeed_fiber();
+
+    /* clear any pending interrupts, may auto mask */
+    IXGBE_READ_REG(IXGBE_EICR);
+    
+}
+
+void ebbrt::IxgbeDriver::ixgbe_open()
+{
+    ixgbe_link_speed link_speed;
+    bool link_up = false;
+    ebbrt::kprintf("%s \n", __FUNCTION__);
+    
+    ixgbe_setup_all_tx_resources();
+    ixgbe_configure_tx();
+    ixgbe_up_complete();
+
+    while(ixgbe_check_mac_link_generic(&link_speed, &link_up, false) == 0){
+	udelay(2000);
+    }
 }
 
 /**
