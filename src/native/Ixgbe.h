@@ -408,6 +408,16 @@ typedef u32 ixgbe_link_speed;
 #define IXGBE_DMATXCTL      0x04A80
 #define IXGBE_DMATXCTL_TE       0x1 /* Transmit Enable */
 
+/*
+ * Split and Replication Receive Control Registers
+ * 00-15 : 0x02100 + n*4
+ * 16-64 : 0x01014 + n*0x40
+ * 64-127: 0x0D014 + (n-64)*0x40
+ */
+#define IXGBE_SRRCTL(_i) (((_i) <= 15) ? (0x02100 + ((_i) * 4)) : \
+                          (((_i) < 64) ? (0x01014 + ((_i) * 0x40)) : \
+			  (0x0D014 + (((_i) - 64) * 0x40))))
+
 /* Autonegotiation advertised speeds */
 typedef u32 ixgbe_autoneg_advertised;
 
@@ -794,12 +804,26 @@ typedef union {
  * TX
  * Descriptors
  **********************/
+/* Transmit Descriptor - Advanced */
+union ixgbe_adv_tx_desc {
+	struct {
+	        uint64_t buffer_addr;      /* Address of descriptor's data buf */
+	        uint32_t cmd_type_len;
+	        uint32_t olinfo_status;
+	} read;
+	struct {
+	        uint64_t rsvd;       /* Reserved */
+		uint32_t nxtseq_seed;
+		uint32_t status;
+	} wb;
+};
+
 // 7.2.3.2.2 Legacy Transmit Descriptor Format
 typedef union {
-  uint64_t raw[2];
+  volatile std::atomic<std::uint64_t> raw[2];
 
   struct {
-    uint64_t buffer_address;
+      uint64_t buffer_address;
 
     union {
       uint64_t word2_raw;
@@ -986,6 +1010,44 @@ typedef struct {
 
   } e10k_queue_t;*/
 
+struct ixgbe_reg_info {
+        u32 ofs;
+        char *name;
+};
+
+static const struct ixgbe_reg_info ixgbe_reg_info_tbl[] = {
+
+        /* General Registers */
+        {IXGBE_CTRL, "CTRL"},
+        {IXGBE_STATUS, "STATUS"},
+        {IXGBE_CTRL_EXT, "CTRL_EXT"},
+
+        /* Interrupt Registers */
+        {IXGBE_EICR, "EICR"},
+
+        /* RX Registers */
+        {IXGBE_SRRCTL(0), "SRRCTL"},
+        {IXGBE_DCA_RXCTRL(0), "DRXCTL"},
+        {IXGBE_RDLEN(0), "RDLEN"},
+        {IXGBE_RDH(0), "RDH"},
+        {IXGBE_RDT(0), "RDT"},
+        {IXGBE_RXDCTL(0), "RXDCTL"},
+        {IXGBE_RDBAL(0), "RDBAL"},
+        {IXGBE_RDBAH(0), "RDBAH"},
+
+        /* TX Registers */
+        {IXGBE_TDBAL(0), "TDBAL"},
+        {IXGBE_TDBAH(0), "TDBAH"},
+        {IXGBE_TDLEN(0), "TDLEN"},
+        {IXGBE_TDH(0), "TDH"},
+        {IXGBE_TDT(0), "TDT"},
+        {IXGBE_TXDCTL(0), "TXDCTL"},
+
+        /* List Terminator */
+        {}
+};
+
+
 // Queue
 typedef struct {
   rdesc_legacy_t* rx_ring;
@@ -1016,5 +1078,6 @@ struct VirtioNetHeader {
     uint16_t csum_offset;
     uint16_t num_buffers;
 };
+
 
 #endif  // BAREMETAL_SRC_INCLUDE_EBBRT_IXGBE_H_

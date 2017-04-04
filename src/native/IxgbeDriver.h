@@ -63,8 +63,8 @@ class IxgbeDriver : public EthernetDevice {
    *	against the system mbuf pool limit, you can tune nmbclusters
    *	to adjust for this.
    */
-  static const constexpr uint32_t NTXDESCS = 256;
-  static const constexpr uint32_t NRXDESCS = 256;
+  static const constexpr uint32_t NTXDESCS = 512;
+  static const constexpr uint32_t NRXDESCS = 512;
   static const constexpr uint32_t RXBUFSZ = 2048;
 
  private:
@@ -114,7 +114,10 @@ class IxgbeDriver : public EthernetDevice {
   void ixgbe_up_complete();
   void ixgbe_get_hw_control();
   void ixgbe_enable_tx_laser_multispeed_fiber();
-  
+  void ixgbe_regdump(struct ixgbe_reg_info *reginfo);
+  void ixgbe_dump();
+  void ixgbe_dump_hw_cntrs();
+
   void PhyInit();
   void StopDevice();
   void GlobalReset();
@@ -289,10 +292,13 @@ class IxgbeDriver : public EthernetDevice {
   size_t rx_tail2;
   size_t rx_size2;
   
-  tdesc_legacy_t* tx_ring2;
-  size_t tx_head2;
-  size_t tx_tail2;
-  size_t tx_size2;
+  volatile tdesc_legacy_t* tx_ring2;
+  //volatile union ixgbe_adv_tx_desc * tx_ring2;
+  volatile size_t tx_head2;
+  volatile size_t tx_tail2;
+  volatile size_t tx_size2;
+  
+  volatile std::atomic<uint8_t>* hantxbuf;
   
   friend class IxgbeDriverRep;
 };  // class IxgbeDriver

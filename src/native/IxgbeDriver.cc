@@ -17,7 +17,45 @@
 
 #include <atomic>
 
-static char txbuf2[128];
+static uint8_t txbuf2[128] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 
+			      0x90, 0xE2, 0xBA, 0x82, 0x33, 0x24,
+			      0x80, 0x00, 0xDE, 0xAD, 0xBE, 0xFF,
+			      0xDE, 0xAD, 0xBE, 0xEF, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+			      0x22, 0x22, 0x22, 0x22, 0x22, 0x22
+};
+
+static uint8_t txbuf3[90] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			     0x90, 0xE2, 0xBA, 0x82, 0x33, 0x24,
+			     0x86, 0xDD, 0x60, 0x00, 0x00, 0x00,
+			     0x00, 0x24, 0x00, 0x01, 0x00, 0x00,
+			     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			     0x00, 0x00, 0xFF, 0x02, 0x00, 0x00,
+			     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			     0x00, 0x00, 0x00, 0x00, 0x00, 0x16,
+			     0x3A, 0x00, 0x05, 0x02, 0x00, 0x00,
+			     0x01, 0x00, 0x8F, 0x00, 0x3B, 0xE4,
+			     0x00, 0x00, 0x00, 0x01, 0x04, 0x00,
+			     0x00, 0x00, 0xFF, 0x02, 0x00, 0x00,
+			     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			     0x00, 0x01, 0xFF, 0x82, 0x33, 0x24
+};
 
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
@@ -36,6 +74,7 @@ void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   // Send test packet
   ixgbe_dev->SendPacket(0);
 
+  mdelay(100);
   /*while (1) {
     // ebbrt::clock::SleepMilli(10000);
     // ebbrt::kprintf("Slept 10s: ");
@@ -146,58 +185,140 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
                  ixgq_.tx_tail);
 }
 
+void ebbrt::IxgbeDriver::ixgbe_regdump(struct ixgbe_reg_info *reginfo) {
+    int i = 0, j = 0;
+    char rname[16];
+    u32 regs[64];
+    
+    switch (reginfo->ofs) {
+    case IXGBE_SRRCTL(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_SRRCTL(i));
+	break;
+    case IXGBE_DCA_RXCTRL(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_DCA_RXCTRL(i));
+	break;
+    case IXGBE_RDLEN(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_RDLEN(i));
+	break;
+    case IXGBE_RDH(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_RDH(i));
+	break;
+    case IXGBE_RDT(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_RDT(i));
+	break;
+    case IXGBE_RXDCTL(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_RXDCTL(i));
+	break;
+    case IXGBE_RDBAL(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_RDBAL(i));
+	break;
+    case IXGBE_RDBAH(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_RDBAH(i));
+	break;
+    case IXGBE_TDBAL(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_TDBAL(i));
+	break;
+    case IXGBE_TDBAH(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_TDBAH(i));
+	break;
+    case IXGBE_TDLEN(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_TDLEN(i));
+	break;
+    case IXGBE_TDH(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_TDH(i));
+	break;
+    case IXGBE_TDT(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_TDT(i));
+	break;
+    case IXGBE_TXDCTL(0):
+	for (i = 0; i < 64; i++)
+	    regs[i] = IXGBE_READ_REG(IXGBE_TXDCTL(i));
+	break;
+    default:
+        KPRINTF("%-15s %08x\n", reginfo->name,
+		IXGBE_READ_REG(reginfo->ofs));
+	return;
+    }
+    
+	for (i = 0; i < 8; i++) {
+	    KPRINTF("%s[%d-%d]", reginfo->name, i*8, i*8+7);
+	    KPRINTF("%-15s", rname);
+	    for (j = 0; j < 8; j++) {
+		KPRINTF(" %08x", regs[i*8+j]);
+	    }
+	    KPRINTF("\n");
+        }
+
+}
+
+void ebbrt::IxgbeDriver::ixgbe_dump() {
+    struct ixgbe_reg_info *reginfo;
+
+    KPRINTF("Register Dump\n");
+    KPRINTF(" Register Name   Value\n");
+    
+    for (reginfo = (struct ixgbe_reg_info *)ixgbe_reg_info_tbl;
+	 reginfo->name; reginfo++) 
+    {
+	ixgbe_regdump(reginfo);
+    }
+
+}
 void ebbrt::IxgbeDriver::SendPacket(uint32_t n) {
-    u32 tlen = 0;
+    //u32 tlen = 64;
 
     KPRINTF("%s\n", __FUNCTION__);
 
-    // dest 90:e2:ba:84:d7:38
-    txbuf2[tlen++] = 0xFF;
-    txbuf2[tlen++] = 0xFF;
-    txbuf2[tlen++] = 0xFF;
-    txbuf2[tlen++] = 0xFF;
-    txbuf2[tlen++] = 0xFF;
-    txbuf2[tlen++] = 0xFF;
-    
-    // src
-    txbuf2[tlen++] = 0x90;
-    txbuf2[tlen++] = 0xE2;
-    txbuf2[tlen++] = 0xBA;
-    txbuf2[tlen++] = 0x82;
-    txbuf2[tlen++] = 0x33;
-    txbuf2[tlen++] = 0x24;
-    
-    // eth type
-    txbuf2[tlen++] = 0x08;
-    txbuf2[tlen++] = 0x00;
-    
-    // payload
-    txbuf2[tlen++] = 0xDE;
-    txbuf2[tlen++] = 0xAD;
-    txbuf2[tlen++] = 0xBE;
-    txbuf2[tlen++] = 0xFF;
-    
-    txbuf2[tlen++] = 0xDE;
-    txbuf2[tlen++] = 0xAD;
-    txbuf2[tlen++] = 0xBE;
-    txbuf2[tlen++] = 0xFF;
+    tx_ring2->buffer_address = reinterpret_cast<uint64_t>(hantxbuf);
+    tx_ring2->word2_raw = 0xB000156;
 
-    for (auto i = tlen; i < 60; i++) {
-	txbuf2[i] = 0x22;
+    /*tx_ring2->length = tlen;
+    tx_ring2->dext = 0;
+    tx_ring2->eop = 1;
+    tx_ring2->
+    tx_ring2->rs = 1;*/
+    
+    //tx_ring2->read.buffer_addr = reinterpret_cast<uint64_t>(txbuf3);
+    //tx_ring2->read.cmd_type_len = 0x2B30003F;
+    //tx_ring2->read.olinfo_status = 0x00168000;
+
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+	  
+    tx_tail2 ++;
+    //KPRINTF("0x%llX 0x%X 0x%X\n", tx_ring2->read.buffer_addr, tx_ring2->read.cmd_type_len, tx_ring2->read.olinfo_status);
+    //KPRINTF("0x%llX 0x%X 0x%X\n", tx_ring2->wb.rsvd, tx_ring2->wb.nxtseq_seed, tx_ring2->wb.status);
+	
+    KPRINTF("0x%llX 0x%llX\n", tx_ring2->buffer_address, tx_ring2->word2_raw); 
+    
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    
+    //asm volatile("wbinvd");
+    
+    ixgbe_dump();
+    ixgbe_dump_hw_cntrs();
+	
+    IXGBE_WRITE_REG(IXGBE_TDT(n), tx_tail2);
+    
+    while(IXGBE_READ_REG(IXGBE_TDH(0)) == 0) {
+	
     }
 
-    tx_ring2->buffer_address = reinterpret_cast<uint64_t>(txbuf2);
-    tx_ring2->length = 60;
-    tx_ring2->eop = 1;
-    tx_ring2->rs = 1;
+    ixgbe_dump();
+    ixgbe_dump_hw_cntrs();
     
-    tx_tail2 += 1;
-    
-    KPRINTF("%p %p\n", txbuf2, tx_ring2->buffer_address);
-    
-    IXGBE_WRITE_REG(IXGBE_TDT(n), tx_tail2);
-
-
   // auto tlen = 0;
   // auto txbuf = (uint8_t*)malloc(sizeof(uint8_t) * 60);
 
@@ -1762,12 +1883,99 @@ s32 ebbrt::IxgbeDriver::ixgbe_read_pba_string_generic(u8 *pba_num,
     return 0;
 }
 
+void ebbrt::IxgbeDriver::ixgbe_dump_hw_cntrs() {
+    u16 i = 0;
+
+    KPRINTF("%s\n", __FUNCTION__);
+
+    KPRINTF("CRCERRS %X\n", IXGBE_READ_REG(IXGBE_CRCERRS));
+	KPRINTF("ILLERRC %X\n", IXGBE_READ_REG(IXGBE_ILLERRC));
+	KPRINTF("ERRBC %X\n", IXGBE_READ_REG(IXGBE_ERRBC));
+	KPRINTF("MSPDC %X\n", IXGBE_READ_REG(IXGBE_MSPDC));
+	for (i = 0; i < 8; i++)
+	    KPRINTF("MPC%d %X\n", i, IXGBE_READ_REG(IXGBE_MPC(i)));
+
+	KPRINTF("MLFC %X\n", IXGBE_READ_REG(IXGBE_MLFC));
+	KPRINTF("MRFC %X\n", IXGBE_READ_REG(IXGBE_MRFC));
+	KPRINTF("RLEC %X\n", IXGBE_READ_REG(IXGBE_RLEC));
+	KPRINTF("LXONTXC %X\n", IXGBE_READ_REG(IXGBE_LXONTXC));
+	KPRINTF("LXOFFTXC %X\n", IXGBE_READ_REG(IXGBE_LXOFFTXC));
+	if (mac->type >= ixgbe_mac_82599EB) {
+		KPRINTF("IXGBE_LXONRXCNT %X\n", IXGBE_READ_REG(IXGBE_LXONRXCNT));
+		KPRINTF("IXGBE_LXOFFRRXCNT%X\n", IXGBE_READ_REG(IXGBE_LXOFFRXCNT));
+	} else {
+		KPRINTF("IXGBE_LXONRXC %X\n", IXGBE_READ_REG(IXGBE_LXONRXC));
+		KPRINTF("IXGBE_LXOFFRXC %X\n", IXGBE_READ_REG(IXGBE_LXOFFRXC));
+	}
+
+	for (i = 0; i < 8; i++) {
+	    KPRINTF("IXGBE_PXONTXC %d %X\n", i, IXGBE_READ_REG(IXGBE_PXONTXC(i)));
+	    KPRINTF("IXGBE_PXOFFTXC %d %X\n", i, IXGBE_READ_REG(IXGBE_PXOFFTXC(i)));
+		if (mac->type >= ixgbe_mac_82599EB) {
+		    KPRINTF("IXGBE_PXONRXCNT %d %X\n", i, IXGBE_READ_REG(IXGBE_PXONRXCNT(i)));
+		    KPRINTF("IXGBE_PXOFFRXCNT %d %X\n", i, IXGBE_READ_REG(IXGBE_PXOFFRXCNT(i)));
+		} else {
+		    KPRINTF("IXGBE_PXONRXC %d %X\n", i, IXGBE_READ_REG(IXGBE_PXONRXC(i)));
+		    KPRINTF("IXGBE_PXOFFRXC %d %X\n", i, IXGBE_READ_REG(IXGBE_PXOFFRXC(i)));
+		}
+	}
+	if (mac->type >= ixgbe_mac_82599EB)
+		for (i = 0; i < 8; i++)
+		    KPRINTF("IXGBE_PXON2OFFCNT %d %X\n", i, IXGBE_READ_REG(IXGBE_PXON2OFFCNT(i)));
+
+	KPRINTF("PRC64 %X\n", IXGBE_READ_REG(IXGBE_PRC64));
+	KPRINTF("PRC127 %X\n", IXGBE_READ_REG(IXGBE_PRC127));
+	KPRINTF("PRC255 %X\n", IXGBE_READ_REG(IXGBE_PRC255));
+	KPRINTF("PRC511 %X\n", IXGBE_READ_REG(IXGBE_PRC511));
+	KPRINTF("PRC1023 %X\n", IXGBE_READ_REG(IXGBE_PRC1023));
+	KPRINTF("PRC1522 %X\n", IXGBE_READ_REG(IXGBE_PRC1522));
+	KPRINTF("GPRC %X\n", IXGBE_READ_REG(IXGBE_GPRC));
+	KPRINTF("BPRC %X\n", IXGBE_READ_REG(IXGBE_BPRC));
+	KPRINTF("MPRC %X\n", IXGBE_READ_REG(IXGBE_MPRC));
+	KPRINTF("GPTC %X\n", IXGBE_READ_REG(IXGBE_GPTC));
+	KPRINTF("GORCL %X\n", IXGBE_READ_REG(IXGBE_GORCL));
+	KPRINTF("GORCH %X\n", IXGBE_READ_REG(IXGBE_GORCH));
+	KPRINTF("GOTCL %X\n", IXGBE_READ_REG(IXGBE_GOTCL));
+	KPRINTF("GOTCH %X\n", IXGBE_READ_REG(IXGBE_GOTCH));
+
+	KPRINTF("RUC %X\n", IXGBE_READ_REG(IXGBE_RUC));
+	KPRINTF("RFC %X\n", IXGBE_READ_REG(IXGBE_RFC));
+	KPRINTF("ROC %X\n", IXGBE_READ_REG(IXGBE_ROC));
+	KPRINTF("RJC %X\n", IXGBE_READ_REG(IXGBE_RJC));
+	KPRINTF("MNGPRC %X\n", IXGBE_READ_REG(IXGBE_MNGPRC));
+	KPRINTF("MNGPDC %X\n", IXGBE_READ_REG(IXGBE_MNGPDC));
+	KPRINTF("MNGTPC %X\n", IXGBE_READ_REG(IXGBE_MNGPTC));
+	KPRINTF("TORL %X\n", IXGBE_READ_REG(IXGBE_TORL));
+	KPRINTF("TORH %X\n", IXGBE_READ_REG(IXGBE_TORH));
+	KPRINTF("TPR %X\n", IXGBE_READ_REG(IXGBE_TPR));
+	KPRINTF("TPT %X\n", IXGBE_READ_REG(IXGBE_TPT));
+	KPRINTF("PTC64 %X\n", IXGBE_READ_REG(IXGBE_PTC64));
+	KPRINTF("PTC127 %X\n", IXGBE_READ_REG(IXGBE_PTC127));
+	KPRINTF("PTC255 %X\n", IXGBE_READ_REG(IXGBE_PTC255));
+	KPRINTF("PTC511 %X\n", IXGBE_READ_REG(IXGBE_PTC511));
+	KPRINTF("PTC1023 %X\n", IXGBE_READ_REG(IXGBE_PTC1023));
+	KPRINTF("PTC1522 %X\n", IXGBE_READ_REG(IXGBE_PTC1522));
+	KPRINTF("MPTC %X\n", IXGBE_READ_REG(IXGBE_MPTC));
+	KPRINTF("BPTC %X\n", IXGBE_READ_REG(IXGBE_BPTC));
+	
+	for (i = 0; i < 16; i++) {
+	    KPRINTF("%d\n", i);
+		KPRINTF("IXGBE_QPRC %X\n", IXGBE_READ_REG(IXGBE_QPRC(i)));
+		KPRINTF("IXGBE_QPTC %X\n", IXGBE_READ_REG(IXGBE_QPTC(i)));
+		KPRINTF("IXGBE_QBRC_L %X\n", IXGBE_READ_REG(IXGBE_QBRC_L(i)));
+		KPRINTF("IXGBE_QBRC_H %X\n", IXGBE_READ_REG(IXGBE_QBRC_H(i)));
+		KPRINTF("IXGBE_QBTC_L %X\n", IXGBE_READ_REG(IXGBE_QBTC_L(i)));
+		KPRINTF("IXGBE_QBTC_H %X\n", IXGBE_READ_REG(IXGBE_QBTC_H(i)));
+		KPRINTF("IXGBE_QPRDC %X\n", IXGBE_READ_REG(IXGBE_QPRDC(i)));
+	}
+}
+
 void ebbrt::IxgbeDriver::ixgbe_clear_hw_cntrs_generic() {
     u16 i = 0;
 
     KPRINTF("%s\n", __FUNCTION__);
 
-    	IXGBE_READ_REG(IXGBE_CRCERRS);
+    IXGBE_READ_REG(IXGBE_CRCERRS);
 	IXGBE_READ_REG(IXGBE_ILLERRC);
 	IXGBE_READ_REG(IXGBE_ERRBC);
 	IXGBE_READ_REG(IXGBE_MSPDC);
@@ -1844,8 +2052,6 @@ void ebbrt::IxgbeDriver::ixgbe_clear_hw_cntrs_generic() {
 		IXGBE_READ_REG(IXGBE_QBTC_H(i));
 		IXGBE_READ_REG(IXGBE_QPRDC(i));
 	}
-	
-
 }
 
 void ebbrt::IxgbeDriver::ixgbe_clear_vfta_generic() {
@@ -2009,7 +2215,52 @@ void ebbrt::IxgbeDriver::ixgbe_setup_all_tx_resources() {
     tx_ring2 = static_cast<tdesc_legacy_t*>(addr); //(tdesc_legacy_t*)malloc(tx_size);
     tx_head2 = 0;
     tx_tail2 = 0;
-    tx_size2 = sz;
+    tx_size2 = NTXDESCS * sizeof(tdesc_legacy_t);
+
+    auto sz2 = align::Up(sizeof(uint8_t) * 512, 4096);
+    auto order2 = Fls(sz2 - 1) - pmem::kPageShift + 1;
+    auto page2 = page_allocator->Alloc(order2);
+    kbugon(page2 == Pfn::None(), "ixgbe: page allocation failed");
+    auto addr2 = reinterpret_cast<void*>(page2.ToAddr());
+    memset(addr2, 0, sz2);
+    hantxbuf = reinterpret_cast<volatile std::atomic<uint8_t>*>(addr2);
+    
+    auto tlen = 0;
+    // // dest 90:e2:ba:84:d7:38
+    hantxbuf[tlen++] = 0xFF;
+    hantxbuf[tlen++] = 0xFF;
+    hantxbuf[tlen++] = 0xFF;
+    hantxbuf[tlen++] = 0xFF;
+    hantxbuf[tlen++] = 0xFF;
+    hantxbuf[tlen++] = 0xFF;
+    
+    // src
+    hantxbuf[tlen++] = 0x90;
+    hantxbuf[tlen++] = 0xE2;
+    hantxbuf[tlen++] = 0xBA;
+    hantxbuf[tlen++] = 0x82;
+    hantxbuf[tlen++] = 0x33;
+    hantxbuf[tlen++] = 0x24;
+    
+    // eth type
+    hantxbuf[tlen++] = 0x08;
+    hantxbuf[tlen++] = 0x00;
+    
+    // payload
+    hantxbuf[tlen++] = 0xDE;
+    hantxbuf[tlen++] = 0xAD;
+    hantxbuf[tlen++] = 0xBE;
+    hantxbuf[tlen++] = 0xFF;
+    
+    hantxbuf[tlen++] = 0xDE;
+    hantxbuf[tlen++] = 0xAD;
+    hantxbuf[tlen++] = 0xBE;
+    hantxbuf[tlen++] = 0xFF;
+    
+    for (auto i = tlen; i < 512; i++) {
+	hantxbuf[i] = 0x22;
+    }
+
 }
 
 void ebbrt::IxgbeDriver::ixgbe_configure_tx_ring() {
