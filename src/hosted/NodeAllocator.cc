@@ -187,6 +187,9 @@ ebbrt::NodeAllocator::NodeAllocator() : node_index_(2), allocation_index_(0) {
   std::cerr << "# wireshark -i br-" << network_id_.substr(0, 12) << " -k"
             << std::endl;
 #endif
+  
+  std::cerr << cmdline_ << std::endl;
+  
   DoAccept(std::move(acceptor), std::move(socket));
 }
 

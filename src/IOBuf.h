@@ -14,6 +14,8 @@
 
 #include <boost/iterator/iterator_facade.hpp>
 
+#include "Debug.h"
+
 namespace ebbrt {
 class IOBuf {
  public:
@@ -31,7 +33,9 @@ class IOBuf {
     return std::unique_ptr<T>(ptr);
   }
 
-  const uint8_t* Data() const { return data_; }
+  const uint8_t* Data() const { 
+    return data_; 
+  }
 
   const uint8_t* Tail() const { return Data() + Length(); }
 
@@ -53,8 +57,13 @@ class IOBuf {
 
   void Advance(size_t amount) {
     assert(length_ >= amount);
+
+    //ebbrt::kprintf("before %s amount = %d data_=%p length_=%d\n", __PRETTY_FUNCTION__, amount, data_, length_);
+
     data_ += amount;
     length_ -= amount;
+
+    //ebbrt::kprintf("after %s amount = %d data_=%p length_=%d\n", __PRETTY_FUNCTION__, amount, data_, length_);
   }
 
   void Retreat(size_t amount) {
@@ -221,11 +230,15 @@ class IOBuf {
     }
 
     void Advance(size_t size) {
+      //ebbrt::kprintf("%s size=%d offset=%d\n", __PRETTY_FUNCTION__, size, offset_);
+      
       assert(p_->Length() > 0);
       while (size > 0) {
         auto remainder = p_->Length() - offset_;
         if (remainder > size) {
           offset_ += size;
+	  //ebbrt::kprintf("%s offset=%d\n", __PRETTY_FUNCTION__, offset_);
+	  
           return;
         }
         p_ = p_->Next();
@@ -270,7 +283,10 @@ class MutIOBuf : public IOBuf {
   MutIOBuf(const uint8_t* data, size_t length) noexcept;
   virtual ~MutIOBuf() {}
 
-  uint8_t* MutData() { return const_cast<uint8_t*>(Data()); }
+  uint8_t* MutData() { 
+    //ebbrt::kprintf("%s %p\n", __PRETTY_FUNCTION__, Data());
+    return const_cast<uint8_t*>(Data()); 
+  }
 
   uint8_t* MutTail() { return const_cast<uint8_t*>(Tail()); }
 
@@ -305,8 +321,10 @@ class MutIOBuf : public IOBuf {
       assert(p->ComputeChainDataLength() > 0);
       // Iterate past any empty buffers up front
       while (p_->Length() == 0) {
+	//ebbrt::kprintf("%s %p len:%d\n", __PRETTY_FUNCTION__, p_->Data(), p_->Length());
         p_ = p_->Next();
       }
+      //ebbrt::kprintf("%s %p len:%d\n", __PRETTY_FUNCTION__, p_->Data(), p_->Length());
     }
 
     uint8_t* Data() {
@@ -314,6 +332,7 @@ class MutIOBuf : public IOBuf {
       if (p_->Length() - offset_ == 0)
         throw std::runtime_error("MutDataPointer::Data() past end of buffer");
 
+      //ebbrt::kprintf("%s MutData=%p offset_=%d\n", __PRETTY_FUNCTION__, p_->MutData(), offset_);
       return p_->MutData() + offset_;
     }
 
@@ -334,11 +353,14 @@ class MutIOBuf : public IOBuf {
     }
 
     void Advance(size_t size) {
+      //ebbrt::kprintf("%s size=%d offset=%d\n", __PRETTY_FUNCTION__, size, offset_);
+
       assert(p_->Length() > 0);
       while (size > 0) {
         auto remainder = p_->Length() - offset_;
         if (remainder > size) {
           offset_ += size;
+	  //ebbrt::kprintf("offset1 = %d\n", offset_);
           return;
         }
         p_ = p_->Next();
@@ -349,6 +371,7 @@ class MutIOBuf : public IOBuf {
       while (p_->Length() == 0) {
         p_ = p_->Next();
       }
+      //ebbrt::kprintf("offset2 = %d\n", offset_);
     }
 
    private:

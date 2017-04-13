@@ -7,18 +7,22 @@
 #include <cstring>
 
 #include "EarlyPageAllocator.h"
+#include "Debug.h"
 
 uintptr_t ebbrt::multiboot::cmdline_addr_;
 uintptr_t ebbrt::multiboot::cmdline_len_;
 ebbrt::multiboot::Information* ebbrt::multiboot::info;
 
 void ebbrt::multiboot::Reserve(Information* mbi) {
+  ebbrt::kprintf("%s\n", __PRETTY_FUNCTION__);
   info = mbi;
   auto mbi_addr = reinterpret_cast<uintptr_t>(mbi);
   early_page_allocator::ReserveRange(mbi_addr, mbi_addr + sizeof(*mbi));
   if (mbi->has_command_line_) {
+    ebbrt::kprintf("\t mbi->has_command_line_\n");
     cmdline_addr_ = mbi->command_line_;
     auto cmdline = reinterpret_cast<const char*>(cmdline_addr_);
+    ebbrt::kprintf("\t %s %p\n", cmdline, cmdline_addr_);
     cmdline_len_ = std::strlen(cmdline);
     early_page_allocator::ReserveRange(cmdline_addr_,
                                        cmdline_addr_ + cmdline_len_ + 1);
@@ -42,5 +46,6 @@ void ebbrt::multiboot::Reserve(Information* mbi) {
 }
 
 const char* ebbrt::multiboot::CmdLine() {
+  //ebbrt::kprintf("%s %p %s\n", __PRETTY_FUNCTION__, cmdline_addr_, reinterpret_cast<const char*>(cmdline_addr_));
   return reinterpret_cast<const char*>(cmdline_addr_);
 }

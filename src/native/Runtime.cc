@@ -58,7 +58,13 @@ class Connection : public ebbrt::TcpHandler {
 }  // namespace
 
 void ebbrt::runtime::Init() {
-  auto cmdline = std::string(ebbrt::multiboot::CmdLine());
+  ebbrt::kprintf("%s\n", __PRETTY_FUNCTION__);
+
+  //std::string(ebbrt::multiboot::CmdLine());
+  auto str = "host_addr=2887385089;host_port=46750;allocid=0 0x10078";
+  auto cmdline = std::string(reinterpret_cast<const char*>(str));
+  ebbrt::kprintf("\t%s\n", cmdline);
+  
   auto loc = cmdline.find("host_addr=");
   if (loc == std::string::npos) {
     kabort("No host address found in command line\n");

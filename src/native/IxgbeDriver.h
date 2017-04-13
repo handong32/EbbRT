@@ -19,6 +19,24 @@
 
 namespace ebbrt {
 
+// Queue
+typedef struct {
+  rdesc_legacy_t* rx_ring;
+  size_t rx_head;
+  size_t rx_tail;
+  size_t rx_size;
+
+  tdesc_legacy_t* tx_ring;
+  size_t tx_head;
+  size_t tx_tail;
+  size_t tx_last_tail;
+  size_t tx_size;
+  bool* tx_isctx;
+
+  std::vector<std::unique_ptr<MutIOBuf>> circ_buffer;
+  
+} e10k_queue_t;
+
 class IxgbeDriverRep;
 
 class IxgbeDriver : public EthernetDevice {
@@ -236,7 +254,7 @@ class IxgbeDriver : public EthernetDevice {
 
   e10k_queue_t* ixgq;
 
-  void* rxbuf;
+  //void* rxbuf;
 
   friend class IxgbeDriverRep;
 };  // class IxgbeDriver
@@ -247,7 +265,12 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
   void Run();
   void ReceivePoll(uint32_t n);
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo);
-  
+  void AddContext(uint8_t idx, uint8_t maclen, 
+		  uint16_t iplen, uint8_t l4len, enum l4_type l4type);
+  void AddTx(const unsigned char *pa, uint64_t len, 
+	     bool first, bool last, 
+	     uint8_t ctx, bool ip_cksum, bool tcpudp_cksum);
+
  private:
   uint16_t ReadRdh_1(uint32_t n);
   void WriteRdt_1(uint32_t n, uint32_t m);

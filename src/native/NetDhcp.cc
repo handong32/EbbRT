@@ -60,7 +60,9 @@ void ebbrt::NetworkManager::Interface::ReceiveDhcp(
     case kDhcpOptionMessageTypeOffer:
       if (dhcp_pcb_.state != DhcpPcb::State::kSelecting)
         return;
-
+      
+      ebbrt::kprintf("%s\n", __FUNCTION__);
+      
       DhcpHandleOffer(dhcp_message);
       break;
     case kDhcpOptionMessageTypeAck:
@@ -195,6 +197,8 @@ void ebbrt::NetworkManager::Interface::DhcpHandleAck(
   DhcpSetState(DhcpPcb::State::kBound);
 
   dhcp_pcb_.complete.SetValue();
+
+  kprintf("%s Done\n", __PRETTY_FUNCTION__);
 }
 
 void ebbrt::NetworkManager::Interface::DhcpPcb::Fire() {

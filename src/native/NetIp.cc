@@ -32,27 +32,55 @@ void ebbrt::NetworkManager::Interface::ReceiveIp(
     EthernetHeader& eth_header, std::unique_ptr<MutIOBuf> buf) {
   auto packet_len = buf->ComputeChainDataLength();
 
+  ebbrt::kprintf("%s len->%d\n", __FUNCTION__, packet_len);
+  
   if (unlikely(packet_len < sizeof(Ipv4Header)))
     return;
 
-  auto dp = buf->GetMutDataPointer();
-  auto& ip_header = dp.Get<Ipv4Header>();
+  // ebbrt::kprintf("%s a-1\n", __FUNCTION__);
 
+   auto dp = buf->GetMutDataPointer();
+  // auto tbuf = dp.Data();
+  // for(int i = 0; i < 20; i++)
+  // {
+  //   ebbrt::kprintf("0x%02X ", tbuf[i]);
+  // }
+  // ebbrt::kprintf("\n");
+  // ebbrt::kabort("aborting\n");
+  
+  auto& ip_header = dp.Get<Ipv4Header>();
+  //auto& ip_header = dp.Get<Ipv4Header2>();
+
+  /*ebbrt::kprintf("version_ihl -> 0x%02X\n", ip_header.version_ihl);
+  ebbrt::kprintf("dscp_ecn -> 0x%02X\n", ip_header.dscp_ecn);
+  ebbrt::kprintf("length -> 0x%04X\n", ip_header.length);
+  ebbrt::kprintf("proto -> 0x%02X\n", ip_header.proto);
+  
+  ebbrt::kabort("aborting\n");*/
+  
   if (unlikely(ip_header.Version() != 4))
     return;
 
+  //ebbrt::kprintf("%s a\n", __FUNCTION__);
+  
   auto hlen = ip_header.HeaderLength();
   if (unlikely(hlen < sizeof(Ipv4Header)))
     return;
 
+  //ebbrt::kprintf("%s b\n", __FUNCTION__);
+
   auto tot_len = ip_header.TotalLength();
   if (unlikely(packet_len < tot_len))
     return;
+  
+  //ebbrt::kprintf("%s c\n", __FUNCTION__);
 
   buf->TrimEnd(packet_len - tot_len);
 
   if (unlikely(ip_header.ComputeChecksum() != 0))
     return;
+
+  //ebbrt::kprintf("%s d\n", __FUNCTION__);
 
   auto addr = Address();
   // Unless the protocol is UDP or we have an address on this interface and the
@@ -63,26 +91,35 @@ void ebbrt::NetworkManager::Interface::ReceiveIp(
                           addr->address != ip_header.dst))))
     return;
 
+  //ebbrt::kprintf("%s e\n", __FUNCTION__);
+
   // Drop unacceptable sources
   if (unlikely(ip_header.src.isBroadcast() || ip_header.src.isMulticast()))
     return;
+
+  //ebbrt::kprintf("%s f\n", __FUNCTION__);
 
   // We do not support fragmentation
   if (unlikely(ip_header.Fragmented()))
     return;
 
+  //ebbrt::kprintf("%s g\n", __FUNCTION__);
+
   buf->Advance(hlen);
 
   switch (ip_header.proto) {
   case kIpProtoICMP: {
+    ebbrt::kprintf("%s icmp\n", __FUNCTION__);
     ReceiveIcmp(eth_header, ip_header, std::move(buf));
     break;
   }
   case kIpProtoUDP: {
+    ebbrt::kprintf("%s udp\n", __FUNCTION__);
     ReceiveUdp(ip_header, std::move(buf));
     break;
   }
   case kIpProtoTCP: {
+    ebbrt::kprintf("%s tcp\n", __FUNCTION__);
     ReceiveTcp(ip_header, std::move(buf));
     break;
   }

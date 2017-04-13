@@ -34,6 +34,17 @@
 #define IXGBE_MFLCN_RPFCE 0x00000004 /* Receive Priority FC Enable */
 #define IXGBE_MFLCN_RFCE 0x00000008 /* Receive FC Enable */
 
+enum l4_type {
+  l4_type_udp = 0,
+  l4_type_tcp,
+  l4_type_sctp,
+  l4_type_rsv
+};
+
+#define ETHHDR_LEN 14
+#define IPHDR_LEN 20
+#define UDPHDR_LEN 8
+
 /***********************
    * RX
    * Descriptors
@@ -240,8 +251,9 @@ typedef union {
       uint64_t raw_2;
 
       struct {
-        // tucmd
         uint64_t ipsec_esp_len : 9;
+	
+        // tucmd
         uint64_t snap : 1;
         uint64_t ipv4 : 1;
         uint64_t l4t : 2;  // l4 packet type
@@ -300,9 +312,10 @@ typedef union {
         uint64_t rsvd_4 : 3;
 
         // idx
-        uint64_t idx : 1;
-        uint64_t rsvd_5 : 2;
-        uint64_t cc : 1;
+        uint64_t idx : 3;
+        //uint64_t rsvd_5 : 2;
+        
+	uint64_t cc : 1;
 
         // popts
         uint64_t ixsm : 1;
@@ -372,20 +385,6 @@ typedef struct {
   // void*                           opaque;
 
   } e10k_queue_t;*/
-
-// Queue
-typedef struct {
-  rdesc_legacy_t* rx_ring;
-  size_t rx_head;
-  size_t rx_tail;
-  size_t rx_size;
-
-  tdesc_legacy_t* tx_ring;
-  size_t tx_head;
-  size_t tx_tail;
-  size_t tx_size;
-
-} e10k_queue_t;
 
 struct VirtioNetHeader {
     static const constexpr uint8_t kNeedsCsum = 1;

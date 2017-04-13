@@ -34,3 +34,15 @@ ebbrt::MakeUniqueIOBuf(size_t capacity, bool zero_memory) {
 
   return std::unique_ptr<MutUniqueIOBuf>(new (b) MutUniqueIOBuf(buf, capacity));
 }
+
+std::unique_ptr<ebbrt::MutUniqueIOBuf>
+ebbrt::MakeUniqueIOBuf2(size_t capacity, uint8_t* b) {
+  //auto size = sizeof(MutUniqueIOBuf) + capacity;
+
+  if (unlikely(b == nullptr))
+    throw std::bad_alloc();
+
+  auto buf = static_cast<uint8_t*>(b) + sizeof(MutUniqueIOBuf);
+
+  return std::unique_ptr<MutUniqueIOBuf>(new (b) MutUniqueIOBuf(buf, capacity));
+}

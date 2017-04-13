@@ -19,6 +19,9 @@ typedef MutIOBufBase<UniqueIOBufOwner> MutUniqueIOBuf;
 std::unique_ptr<MutUniqueIOBuf> MakeUniqueIOBuf(size_t capacity,
                                                 bool zero_memory = false);
 
+std::unique_ptr<MutUniqueIOBuf> MakeUniqueIOBuf2(size_t capacity,
+						 uint8_t* b);
+
 class UniqueIOBufOwner {
  public:
   const uint8_t* Buffer() const;
@@ -53,6 +56,8 @@ class IOBufBase<UniqueIOBufOwner> : public UniqueIOBufOwner, public IOBuf {
 
   friend std::unique_ptr<MutUniqueIOBuf>
   ebbrt::MakeUniqueIOBuf(size_t capacity, bool zero_memory);
+  friend std::unique_ptr<MutUniqueIOBuf>
+  ebbrt::MakeUniqueIOBuf2(size_t capacity, uint8_t* b);
 };
 
 template <>
@@ -69,6 +74,8 @@ class MutIOBufBase<UniqueIOBufOwner> : public UniqueIOBufOwner,
 
   friend std::unique_ptr<MutUniqueIOBuf>
   ebbrt::MakeUniqueIOBuf(size_t capacity, bool zero_memory);
+  friend std::unique_ptr<MutUniqueIOBuf>
+  ebbrt::MakeUniqueIOBuf2(size_t capacity, uint8_t* b);
 };
 
 }  // namespace ebbrt

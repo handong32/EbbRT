@@ -9,6 +9,19 @@
 #include "NetMisc.h"
 
 namespace ebbrt {
+struct __attribute__((packed)) Ipv4Header2 {
+  uint8_t version_ihl;
+  uint8_t dscp_ecn;
+  uint16_t length;
+  uint16_t id;
+  uint16_t flags_fragoff;
+  uint8_t ttl;
+  uint8_t proto;
+  uint16_t chksum;
+  Ipv4Address src;
+  Ipv4Address dst;
+};
+
 struct __attribute__((packed)) Ipv4Header {
   static const constexpr uint16_t kReservedFlag = 0x8000;
   static const constexpr uint16_t kDontFragment = 0x4000;
