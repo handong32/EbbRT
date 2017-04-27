@@ -27,14 +27,13 @@ typedef struct {
   size_t rx_size;
 
   tdesc_legacy_t* tx_ring;
-  size_t tx_head;
+  uint32_t *tx_head;
   size_t tx_tail;
   size_t tx_last_tail;
   size_t tx_size;
   bool* tx_isctx;
 
   std::vector<std::unique_ptr<MutIOBuf>> circ_buffer;
-  
 } e10k_queue_t;
 
 class IxgbeDriverRep;
@@ -200,6 +199,9 @@ class IxgbeDriver : public EthernetDevice {
   void WriteTdh(uint32_t n, uint32_t m);
   void WriteTdt(uint32_t n, uint32_t m);
 
+  void WriteTdwbal(uint32_t n, uint32_t m);
+  void WriteTdwbah(uint32_t n, uint32_t m);
+  
   void WriteHlreg0(uint32_t m);
   void WriteRdrxctl(uint32_t m);
   void WriteEiac(uint32_t m);

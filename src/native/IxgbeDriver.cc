@@ -132,7 +132,12 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   // bump tx_tail
   WriteTdt_1(n, ixgq_.tx_tail); // indicates position beyond last descriptor hw
 
-  ebbrt::clock::SleepMilli(1000); //removing this causes general protection fault in Timer code??
+  // TODO: removing this causes general protection fault in Timer code??
+  ebbrt::clock::SleepMilli(1000);
+  
+  // TODO: when and where to update tx_head
+  //ixgq_.tx_head = ixgq_.tx_hwb[0] % ixgq_.tx_size;
+  ebbrt::kprintf("\t tx_head->%d tx_tail->%d \n", ixgq_.tx_head[0], ixgq_.tx_tail);
 }
 
 void ebbrt::IxgbeDriver::InitStruct() {
@@ -725,6 +730,17 @@ uint16_t ebbrt::IxgbeDriver::ReadTdh(uint32_t n) {
   return reg & 0xFFFF;
 }
 
+// 8.2.3.9.11 Tx Descriptor Completion Write Back Address Low —
+// TDWBAL[n] (0x06038+0x40*n, n=0...127; RW)
+void ebbrt::IxgbeDriver::WriteTdwbal(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x06038 + 0x40 * n, m);
+}
+// 8.2.3.9.12 Tx Descriptor Completion Write Back Address High —
+// TDWBAH[n] (0x0603C+0x40*n, n=0...127; RW)
+void ebbrt::IxgbeDriver::WriteTdwbah(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x0603C + 0x40 * n, m);
+}
+
 // 8.2.3.9.9 Transmit Descriptor Tail — TDT[n] (0x06018+0x40*n, n=0...127; RW)
 void ebbrt::IxgbeDriver::WriteTdt(uint32_t n, uint32_t m) {
   bar0_.Write32(0x06018 + 0x40 * n, m);
@@ -1151,18 +1167,8 @@ void ebbrt::IxgbeDriver::Init() {
 }
 
 void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {  
-  ebbrt::kprintf("sizeof(rdesc_legacy_t) = %d\n", sizeof(rdesc_legacy_t));
-  /*ebbrt::kprintf("sizeof(rdesc_advance_rf_t) = %d\n",
-                 sizeof(rdesc_advance_rf_t));
-  ebbrt::kprintf("sizeof(rdesc_advance_wbf_t) = %d\n",
-  sizeof(rdesc_advance_wbf_t));*/
-  ebbrt::kprintf("sizeof(tdesc_legacy_t) = %d\n", sizeof(tdesc_legacy_t));
-  /*ebbrt::kprintf("sizeof(tdesc_advance_ctxt_wb_t) = %d\n",
-                 sizeof(tdesc_advance_ctxt_wb_t));
-  ebbrt::kprintf("sizeof(tdesc_advance_tx_rf_t) = %d\n",
-                 sizeof(tdesc_advance_tx_rf_t));
-  ebbrt::kprintf("sizeof(tdesc_advance_tx_wbf_t) = %d\n",
-  sizeof(tdesc_advance_tx_wbf_t));*/
+  //ebbrt::kprintf("sizeof(rdesc_legacy_t) = %d\n", sizeof(rdesc_legacy_t));
+  //ebbrt::kprintf("sizeof(tdesc_legacy_t) = %d\n", sizeof(tdesc_legacy_t));
 
   // allocate memory for descriptor rings
   ixgq = (e10k_queue_t*)malloc(sizeof(e10k_queue_t));
@@ -1170,12 +1176,16 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
   // TX
   auto tx_size = sizeof(tdesc_legacy_t) * NTXDESCS;
   ixgq->tx_ring = (tdesc_legacy_t*)malloc(tx_size);
-  ixgq->tx_head = 0;
+  //ixgq->tx_head = 0;
+  //TODO: not sure how much to allocate
+  ixgq->tx_head = (uint32_t*)malloc(4 * sizeof(uint32_t));
+  memset(ixgq->tx_head, 0, 4 * sizeof(uint32_t));
+  
   ixgq->tx_tail = 0;
   ixgq->tx_last_tail = 0;
   ixgq->tx_isctx = (bool*)malloc(NTXDESCS * sizeof(bool));
   ixgq->tx_size = NTXDESCS;
-
+  
   // RX - allocate a ring of 256 receive legacy descriptors
   auto rx_size = sizeof(rdesc_legacy_t) * NRXDESCS;
   ixgq->rx_ring = (rdesc_legacy_t*)malloc(rx_size);
@@ -1318,20 +1328,27 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
   assert((tx_size & 0x7F) == 0);
   WriteTdlen(i, tx_size);
 
+  // set up head wb
+  uint64_t txhwbaddr = reinterpret_cast<uint64_t>(ixgq->tx_head);
+  assert((txhwbaddr & 0x3) == 0); //lower 2 bits = 0
+  uint32_t txhwbaddrl = txhwbaddr & 0xFFFFFFFF;
+  uint32_t txhwbaddrh = (txhwbaddr >> 32) & 0xFFFFFFFF;
+  WriteTdwbal(i, txhwbaddrl | 0x1); //HGead_WB_En = 1
+  WriteTdwbah(i, txhwbaddrh);
+  
   // init head and tail ptr
   WriteTdh(i, 0x0);
   WriteTdt(i, 0x0);
-
+  
   // enable transmit path
   WriteDmatxctl_te(0x1);
-
+  
   // transmit queue enable
   WriteTxdctl(i, 0x1 << 25);
   // poll until set, TODO: Timeout
-  while (ReadTxdctl_enable(i) == 0)
-    ;
+  while (ReadTxdctl_enable(i) == 0);
   ebbrt::kprintf("TX queue enabled\n");
-
+  
   // TODO: set up dca txctrl FreeBSD?
   WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
 }
@@ -1385,16 +1402,20 @@ void ebbrt::IxgbeDriverRep::ReceivePoll(uint32_t n) {
     }
   }
   
+  // TODO: Update tail register here or above?
   if(count > 0)
   {
     // update reg
     WriteRdt_1(n, ixgq_.rx_tail);
+    //ebbrt::kprintf("\t rx_head->%d rx_tail->%d \n", ixgq_.rx_head, ixgq_.rx_tail);
   }
 }
 
 ebbrt::IxgbeDriverRep::IxgbeDriverRep(const IxgbeDriver& root)
     : root_(root), ixgq_(root_.GetQueue()),
-      receive_callback_([this]() { ReceivePoll(0); }) {}
+      receive_callback_([this]() { ReceivePoll(0); }) {
+  // check if core 0
+}
 
 uint16_t ebbrt::IxgbeDriverRep::ReadRdh_1(uint32_t n) {
   auto reg = root_.bar0_.Read32(0x01010 + 0x40 * n);
