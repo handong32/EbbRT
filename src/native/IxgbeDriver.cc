@@ -6,6 +6,9 @@
 
 #include "../StaticIOBuf.h"
 #include "../UniqueIOBuf.h"
+#include "../Align.h"
+#include "Fls.h"
+#include "Pfn.h"
 #include "Clock.h"
 #include "Debug.h"
 #include "EventManager.h"
@@ -20,7 +23,15 @@ void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   ixgbe_dev->Init();
   ixgbe_dev->ebb_ =
       IxgbeDriverRep::Create(ixgbe_dev, ebb_allocator->AllocateLocal());
-  ixgbe_dev->SetupQueue(0);
+  
+  auto rcv_vector =
+    event_manager->AllocateVector([this]() { (ixgbe_dev->ebb_).ReceivePoll(); });
+
+  for(size_t i = 0; i < Cpu::Count(); i++) {
+    ixgbe_dev->SetupMultiQueue(i, rcv_vector);
+  }
+  
+  //ixgbe_dev->SetupQueue(0);
   ebbrt::clock::SleepMilli(200);
   ebbrt::kprintf("intel 82599 card initialzed\n");
 }
@@ -686,7 +697,7 @@ void ebbrt::IxgbeDriver::WriteSwfwSyncSmBits2(uint32_t m) {
 // 8.2.3.8.1 Receive Descriptor Base Address Low — RDBAL[n] (0x01000 + 0x40*n,
 // n=0...63 and 0x0D000 + 0x40*(n-64), n=64...127; RW)
 void ebbrt::IxgbeDriver::WriteRdbal_1(uint32_t n, uint32_t m) {
-  ebbrt::kprintf("%s 0x%X\n", __FUNCTION__, m);
+  //ebbrt::kprintf("%s 0x%X\n", __FUNCTION__, m);
   bar0_.Write32(0x01000 + 0x40 * n, m);
 }
 void ebbrt::IxgbeDriver::WriteRdbal_2(uint32_t n, uint32_t m) {
@@ -749,7 +760,7 @@ void ebbrt::IxgbeDriver::WriteTdt(uint32_t n, uint32_t m) {
 // 8.2.3.8.3 Receive Descriptor Length — RDLEN[n] (0x01008 + 0x40*n, n=0...63
 // and 0x0D008 + 0x40*(n-64), n=64...127; RW)
 void ebbrt::IxgbeDriver::WriteRdlen_1(uint32_t n, uint32_t m) {
-  ebbrt::kprintf("%s %d\n", __FUNCTION__, m);
+  //ebbrt::kprintf("%s %d\n", __FUNCTION__, m);
   bar0_.Write32(0x01008 + 0x40 * n, m);
 }
 void ebbrt::IxgbeDriver::WriteRdlen_2(uint32_t n, uint32_t m) {
@@ -818,19 +829,40 @@ void ebbrt::IxgbeDriver::SwfwSemRelease() {
 // n=0...63; RW)
 void ebbrt::IxgbeDriver::WriteIvarAlloc0(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x00900 + 4 * n);
-  reg = reg & ~(0x3F);
+  //reg = reg & ~(0x3F);
   bar0_.Write32(0x00900 + 4 * n, reg | m);
 }
 void ebbrt::IxgbeDriver::WriteIvarAllocval0(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x00900 + 4 * n);
   bar0_.Write32(0x00900 + 4 * n, reg | m);
 }
+
 void ebbrt::IxgbeDriver::WriteIvarAlloc1(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x00900 + 4 * n);
-  reg = reg & ~(0x3F << 8);
+  //reg = reg & ~(0x3F << 8);
   bar0_.Write32(0x00900 + 4 * n, reg | m);
 }
 void ebbrt::IxgbeDriver::WriteIvarAllocval1(uint32_t n, uint32_t m) {
+  auto reg = bar0_.Read32(0x00900 + 4 * n);
+  bar0_.Write32(0x00900 + 4 * n, reg | m);
+}
+
+void ebbrt::IxgbeDriver::WriteIvarAlloc2(uint32_t n, uint32_t m) {
+  auto reg = bar0_.Read32(0x00900 + 4 * n);
+  //reg = reg & ~(0x3F << 8);
+  bar0_.Write32(0x00900 + 4 * n, reg | m);
+}
+void ebbrt::IxgbeDriver::WriteIvarAllocval2(uint32_t n, uint32_t m) {
+  auto reg = bar0_.Read32(0x00900 + 4 * n);
+  bar0_.Write32(0x00900 + 4 * n, reg | m);
+}
+
+void ebbrt::IxgbeDriver::WriteIvarAlloc3(uint32_t n, uint32_t m) {
+  auto reg = bar0_.Read32(0x00900 + 4 * n);
+  //reg = reg & ~(0x3F << 8);
+  bar0_.Write32(0x00900 + 4 * n, reg | m);
+}
+void ebbrt::IxgbeDriver::WriteIvarAllocval3(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x00900 + 4 * n);
   bar0_.Write32(0x00900 + 4 * n, reg | m);
 }
@@ -1166,10 +1198,96 @@ void ebbrt::IxgbeDriver::Init() {
   }
 }
 
-void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {  
-  //ebbrt::kprintf("sizeof(rdesc_legacy_t) = %d\n", sizeof(rdesc_legacy_t));
-  //ebbrt::kprintf("sizeof(tdesc_legacy_t) = %d\n", sizeof(tdesc_legacy_t));
+void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i, uint8_t rcv_vector) {
+  // allocate memory for descriptor rings
+  ixgmq[i].reset(new e10Kq(i, Cpu::GetMyNode()));
+  
+  // not going to set up receive descripts greater than 63
+  assert(i < 64);
 
+  // update register RDBAL, RDBAH with receive descriptor base address
+  WriteRdbal_1(i, ixgmq[i]->rxaddr & 0xFFFFFFFF);
+  WriteRdbah_1(i, (ixgmq[i]->rxaddr >> 32) & 0xFFFFFFFF);
+
+  // set to number of bytes allocated for receive descriptor ring
+  WriteRdlen_1(i, ixgmq[i]->rx_size_bytes_);
+
+  // program srrctl register
+  WriteSrrctl_1(i, RXBUFSZ / 1024);  // bsizepacket = 2 KB
+  // TODO use adv?
+  WriteSrrctl_1_desctype(i, ~(0x7 << 25));  // desctype legacy
+  WriteSrrctl_1(i, 0x1 << 28);  // Drop_En
+
+  // Set Enable bit in receive queue
+  WriteRxdctl_1_enable(i, 0x1 << 25);
+  // till set
+  // TODO: Timeout
+  while (ReadRxdctl_1_enable(i) == 0);
+
+  // Set head and tail pointers
+  WriteRdt_1(i, 0x0);
+  WriteRdh_1(i, 0x0);
+  ebbrt::kprintf("RX queue enabled\n");
+  
+  // setup RX interrupts for queue i
+  dev_.SetMsixEntry(i * 2, rcv_vector, i);
+  
+  // don't set up interrupts for tx since we have head writeback??
+  auto qn = i / 2; // put into correct IVAR
+  if((i % 2) == 0) { // check if 2xN or 2xN + 1
+    WriteIvarAlloc0(qn, i*2); // rx interrupt allocation corresponds to index i * 2 in MSI-X table
+    WriteIvarAllocval0(qn, 0x1 << 7);
+  }
+  else {
+    WriteIvarAlloc2(qn, (i*2) << 16);
+    WriteIvarAllocval2(qn, 0x1 << 23);
+  }
+  
+  // 7.3.1.4 - Note that there are no EIAC(1)...EIAC(2) registers.
+  // The hardware setting for interrupts 16...63 is always auto clear.
+  
+  if(i < 16) {
+    // enable auto clear
+    WriteEiac(0x1 << i);
+    
+    // enable interrupt
+    WriteEimsn(i, 0x1 << i);
+    
+    // make sure interupt is cleared
+    WriteEicr(0x1 << i);
+  }
+  
+  // Enable RX
+  // disable RX_DIS
+  WriteSecrxctrl_Rx_Dis(0x1 << 1);
+  // TODO Timeout
+  while (ReadSecrxstat_Sr_Rdy() == 0);  
+  WriteRxctrl(0x1);
+  // enable RX_DIS
+  WriteSecrxctrl_Rx_Dis(0x0 << 1);
+  ebbrt::kprintf("RX enabled\n");
+  
+  // add buffer to each descriptor
+  for (auto j = 0; j < 256 - 1; j++) {
+    auto rxphys =reinterpret_cast<uint64_t>((ixgmq[i]->circ_buffer[j])->MutData());
+    auto tail = ixgmq[i]->rx_tail;
+    
+    // update buffer address for descriptor
+    ixgmq[i]->rx_ring[tail].buffer_address = rxphys;
+    ixgmq[i]->rx_tail = (tail + 1) % ixgmq[i]->rx_size;
+  }
+
+  // bump tail pts via register rdt to enable descriptor fetching by setting to
+  // length of ring minus one
+  WriteRdt_1(i, ixgmq[i]->rx_tail);
+  
+  ebbrt::kprintf("RX Queue setup complete - head=%d tail=%d\n\n", ixgmq[i]->rx_head,
+		 ixgmq[i]->rx_tail);
+  
+  
+}
+
+void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {  
   // allocate memory for descriptor rings
   ixgq = (e10k_queue_t*)malloc(sizeof(e10k_queue_t));
 
@@ -1246,9 +1364,9 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
   ebbrt::kprintf("RX queue enabled\n");
 
   // setup RX interrupts for queue 0
-  auto rcv_vector =
-    event_manager->AllocateVector([this, i]() { ebb_->ReceivePoll(i); });
-  dev_.SetMsixEntry(i * 2, rcv_vector, i);  // TODO: fix
+  //auto rcv_vector =
+  //  event_manager->AllocateVector([this]() { ebb_->ReceivePoll(); });
+  //dev_.SetMsixEntry(i * 2, rcv_vector, i);  // TODO: fix
 
   //auto ii = i / 2;
   // if((i % 2) == 0) {
@@ -1379,7 +1497,7 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr) {
   return 1;
 }
 
-void ebbrt::IxgbeDriverRep::ReceivePoll(uint32_t n) {
+void ebbrt::IxgbeDriverRep::ReceivePoll() {
   uint32_t len;
   uint64_t bAddr;
   auto count = 0;
@@ -1406,14 +1524,14 @@ void ebbrt::IxgbeDriverRep::ReceivePoll(uint32_t n) {
   if(count > 0)
   {
     // update reg
-    WriteRdt_1(n, ixgq_.rx_tail);
+    //WriteRdt_1(n, ixgq_.rx_tail);
     //ebbrt::kprintf("\t rx_head->%d rx_tail->%d \n", ixgq_.rx_head, ixgq_.rx_tail);
   }
 }
 
 ebbrt::IxgbeDriverRep::IxgbeDriverRep(const IxgbeDriver& root)
     : root_(root), ixgq_(root_.GetQueue()),
-      receive_callback_([this]() { ReceivePoll(0); }) {
+      receive_callback_([this]() { ReceivePoll(); }) {
   // check if core 0
 }
 
@@ -1428,7 +1546,7 @@ void ebbrt::IxgbeDriverRep::WriteRdt_1(uint32_t n, uint32_t m) {
 void ebbrt::IxgbeDriverRep::Run() {
   ebbrt::kprintf("%s\n", __FUNCTION__);
   while (1) {
-    ReceivePoll(0);
+    ReceivePoll();
   }
 }
 void ebbrt::IxgbeDriverRep::WriteTdt_1(uint32_t n, uint32_t m) {

@@ -8,6 +8,8 @@
 #include "../Align.h"
 #include "../MulticoreEbb.h"
 #include "../SpinLock.h"
+#include "../StaticIOBuf.h"
+#include "../UniqueIOBuf.h"
 #include "Debug.h"
 #include "Fls.h"
 #include "Ixgbe.h"
@@ -48,8 +50,10 @@ class IxgbeDriver : public EthernetDevice {
     // set up interrupts, polling won't work after this
     auto msix = dev_.MsixEnable();
     kbugon(!msix, "Ixgbe without msix is unsupported\n");
-
-    ebbrt::kprintf("%s constructor\n", __FUNCTION__);
+    
+    // each core gets a queue struct
+    ebbrt::kprintf("Cpu Count = %d\n", Cpu::Count());
+    ixgmq.resize(Cpu::Count());
   }
   
   static void Create(pci::Device& dev);
@@ -84,6 +88,86 @@ class IxgbeDriver : public EthernetDevice {
   static const constexpr uint32_t NRXDESCS = 256;
   static const constexpr uint32_t RXBUFSZ = 2048;
 
+  class e10Kq {
+  public:    
+  e10Kq(size_t idx, Nid nid) : rx_head_(0), rx_tail_(0), rx_size_(NRXDESCS),
+      tx_tail_(0), tx_last_tail_(0), tx_size_(NTXDESCS), idx_(idx) {
+      
+      circ_buffer_.reserve(NRXDESCS);
+      for(uint32_t k=0; k < NRXDESCS; k ++)
+      {
+	circ_buffer_.emplace_back(MakeUniqueIOBuf(RXBUFSZ, true));
+      }
+      
+      auto sz = align::Up(sizeof(rdesc_legacy_t) * NTXDESCS +
+			  sizeof(tdesc_legacy_t) * NRXDESCS +
+			  sizeof(bool) * NTXDESCS +
+			  sizeof(uint32_t) * 4, 4096);
+
+      auto order = Fls(sz - 1) - pmem::kPageShift + 1;
+      auto page = page_allocator->Alloc(order, nid);
+      kbugon(page == Pfn::None(), "ixgbe: page allocation failed in %s", __FUNCTION__);
+      addr_ = reinterpret_cast<void*>(page.ToAddr());
+      memset(addr_, 0, sz);
+      
+      rx_ring_ = static_cast<rdesc_legacy_t*>(addr_);
+      tx_ring_ = static_cast<tdesc_legacy_t*>(
+	static_cast<void*>(
+	  reinterpret_cast<char*>(rx_ring_) + NRXDESCS + sizeof(rdesc_legacy_t)
+	  )
+	);
+      
+      tx_isctx_ = static_cast<bool*>(
+	static_cast<void*>(
+	  reinterpret_cast<char*>(tx_ring_) + NTXDESCS * sizeof(tdesc_legacy_t)
+	  )
+	);
+      
+      tx_head_ = static_cast<uint32_t*>(	
+	static_cast<void*>(
+	  reinterpret_cast<char*>(tx_isctx_) + NTXDESCS * sizeof(bool)
+	  )
+	);
+
+      rxaddr = reinterpret_cast<uint64_t>(rx_ring_);
+      txaddr = reinterpret_cast<uint64_t>(tx_ring_);
+      txhwbaddr = reinterpret_cast<uint64_t>(tx_head_);
+      rx_size_bytes_ = sizeof(rdesc_legacy_t) * NRXDESCS;
+      tx_size_bytes_ = sizeof(tdesc_legacy_t) * NTXDESCS;
+
+      // rxaddr and txaddr must be 128 byte aligned
+      assert((rxaddr & 0x7F) == 0);
+      assert((txaddr & 0x7F) == 0);
+      assert((rx_size_bytes & 0x7F) == 0);
+      
+      // txhwbaddr must be byte aligned
+      assert((txhwbaddr & 0x3) == 0);
+      
+      ebbrt::kprintf("Core %d: rx_addr = %p, tx_addr = %p, txhwbaddr = %p\n", Cpu::GetMine(), rxaddr, txaddr, txhwbaddr);
+    }
+
+    size_t rx_head_;
+    size_t rx_tail_;
+    size_t rx_size_;
+    size_t tx_tail_;
+    size_t tx_last_tail_;
+    size_t tx_size_;
+    size_t idx_;
+    size_t rx_size_bytes_;
+    size_t tx_size_bytes_;
+    uint64_t rxaddr;
+    uint64_t txaddr;
+    uint64_t txhwbaddr;
+    
+    std::vector<std::unique_ptr<MutIOBuf>> circ_buffer_;
+    
+    void* addr_;
+    rdesc_legacy_t* rx_ring_;
+    tdesc_legacy_t* tx_ring_;
+    bool* tx_isctx_;
+    uint32_t *tx_head_;
+  };
+
  private:
   EbbRef<IxgbeDriverRep> ebb_;
   NetworkManager::Interface& itf_;
@@ -96,6 +180,7 @@ class IxgbeDriver : public EthernetDevice {
   void StopDevice();
   void GlobalReset();
   void SetupQueue(uint32_t i);
+  void SetupMultiQueue(uint32_t i);
 
   bool SwsmSmbiRead();
   void SwsmSmbiClear();
@@ -256,7 +341,7 @@ class IxgbeDriver : public EthernetDevice {
 
   e10k_queue_t* ixgq;
 
-  //void* rxbuf;
+  std::vector<std::unique_ptr<e10Kq>> ixgmq;
 
   friend class IxgbeDriverRep;
 };  // class IxgbeDriver
@@ -265,7 +350,7 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
  public:
   explicit IxgbeDriverRep(const IxgbeDriver& root);
   void Run();
-  void ReceivePoll(uint32_t n);
+  void ReceivePoll();
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo);
   void AddContext(uint8_t idx, uint8_t maclen, 
 		  uint16_t iplen, uint8_t l4len, enum l4_type l4type);
