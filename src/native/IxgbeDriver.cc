@@ -24,11 +24,11 @@ void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   ixgbe_dev->ebb_ =
       IxgbeDriverRep::Create(ixgbe_dev, ebb_allocator->AllocateLocal());
   
-  auto rcv_vector =
-    event_manager->AllocateVector([this]() { (ixgbe_dev->ebb_).ReceivePoll(); });
-
+  //auto rcv_vector =
+  //event_manager->AllocateVector([this]() { ixgbe_dev->ebb_.ReceivePoll(); });
+  
   for(size_t i = 0; i < Cpu::Count(); i++) {
-    ixgbe_dev->SetupMultiQueue(i, rcv_vector);
+    ixgbe_dev->SetupMultiQueue(i);
   }
   
   //ixgbe_dev->SetupQueue(0);
@@ -50,14 +50,14 @@ void ebbrt::IxgbeDriverRep::AddContext(uint8_t idx, uint8_t maclen, uint16_t ipl
 
   tdesc_advance_ctxt_wb_t *actx;
 
-  auto tail = ixgq_.tx_tail;
-  actx = reinterpret_cast<tdesc_advance_ctxt_wb_t *>(&(ixgq_.tx_ring[tail]));
+  auto tail = ixgmq_.tx_tail_;
+  actx = reinterpret_cast<tdesc_advance_ctxt_wb_t *>(&(ixgmq_.tx_ring_[tail]));
 
   actx->raw_1 = 0x0;
   actx->raw_2 = 0x0;
   
   memset(actx, 0, sizeof(tdesc_advance_ctxt_wb_t));
-  ixgq_.tx_isctx[tail] = true;
+  ixgmq_.tx_isctx_[tail] = true;
   
   actx->dytp = 0b0010;
   actx->dext = 1;
@@ -69,8 +69,8 @@ void ebbrt::IxgbeDriverRep::AddContext(uint8_t idx, uint8_t maclen, uint16_t ipl
   actx->l4len = 0; //ignored when TSE not set
   actx->l4t = l4type;
   
-  ixgq_.tx_last_tail = ixgq_.tx_tail;
-  ixgq_.tx_tail = (tail + 1) % ixgq_.tx_size;
+  ixgmq_.tx_last_tail_ = ixgmq_.tx_tail_;
+  ixgmq_.tx_tail_ = (tail + 1) % ixgmq_.tx_size_;
   
   //ebbrt::kprintf("%s raw_1->0x%llX raw_2->0x%llx head->%d tail->%d \n", __FUNCTION__, actx->raw_1, actx->raw_2, ixgq_.tx_head, ixgq_.tx_tail);
 }
@@ -79,10 +79,10 @@ void ebbrt::IxgbeDriverRep::AddTx(const unsigned char *pa, uint64_t len, bool fi
 
   tdesc_advance_tx_rf_t* actx;
 
-  auto tail = ixgq_.tx_tail;
-  actx = reinterpret_cast<tdesc_advance_tx_rf_t *>(&(ixgq_.tx_ring[tail]));
+  auto tail = ixgmq_.tx_tail_;
+  actx = reinterpret_cast<tdesc_advance_tx_rf_t *>(&(ixgmq_.tx_ring_[tail]));
 
-  ixgq_.tx_isctx[tail] = false;
+  ixgmq_.tx_isctx_[tail] = false;
 
   actx->raw[0] = 0x0;
   actx->raw[1] = 0x0;
@@ -106,8 +106,8 @@ void ebbrt::IxgbeDriverRep::AddTx(const unsigned char *pa, uint64_t len, bool fi
     actx->txsm = tcpudp_cksum; //udp or tcp checksum offload
   }
 
-  ixgq_.tx_last_tail = ixgq_.tx_tail;
-  ixgq_.tx_tail = (tail + 1) % ixgq_.tx_size;
+  ixgmq_.tx_last_tail_ = ixgmq_.tx_tail_;
+  ixgmq_.tx_tail_ = (tail + 1) % ixgmq_.tx_size_;
   
   //ebbrt::kprintf("%s raw_1->0x%llX raw_2->0x%llx head->%d tail->%d \n", __FUNCTION__, actx->raw[0], actx->raw[1], ixgq_.tx_head, ixgq_.tx_tail);
 }
@@ -136,19 +136,17 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     AddTx(txbuf, len, true, true, -1, false, false);
   }
   
-  auto n = 0;
-  
   ebbrt::kprintf("** %s **\n", __FUNCTION__);
   
   // bump tx_tail
-  WriteTdt_1(n, ixgq_.tx_tail); // indicates position beyond last descriptor hw
+  WriteTdt_1(Cpu::GetMine(), ixgmq_.tx_tail_); // indicates position beyond last descriptor hw
 
   // TODO: removing this causes general protection fault in Timer code??
   ebbrt::clock::SleepMilli(1000);
   
   // TODO: when and where to update tx_head
   //ixgq_.tx_head = ixgq_.tx_hwb[0] % ixgq_.tx_size;
-  ebbrt::kprintf("\t tx_head->%d tx_tail->%d \n", ixgq_.tx_head[0], ixgq_.tx_tail);
+  ebbrt::kprintf("\t tx_head->%d tx_tail->%d \n", ixgmq_.tx_head_[0], ixgmq_.tx_tail_);
 }
 
 void ebbrt::IxgbeDriver::InitStruct() {
@@ -1198,7 +1196,12 @@ void ebbrt::IxgbeDriver::Init() {
   }
 }
 
-void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i, uint8_t rcv_vector) {
+void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
+  if(!rcv_vector) {
+    rcv_vector =
+      event_manager->AllocateVector([this]() { ebb_->ReceivePoll(); });
+  }
+
   // allocate memory for descriptor rings
   ixgmq[i].reset(new e10Kq(i, Cpu::GetMyNode()));
   
@@ -1206,8 +1209,8 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i, uint8_t rcv_vector) {
   assert(i < 64);
 
   // update register RDBAL, RDBAH with receive descriptor base address
-  WriteRdbal_1(i, ixgmq[i]->rxaddr & 0xFFFFFFFF);
-  WriteRdbah_1(i, (ixgmq[i]->rxaddr >> 32) & 0xFFFFFFFF);
+  WriteRdbal_1(i, ixgmq[i]->rxaddr_ & 0xFFFFFFFF);
+  WriteRdbah_1(i, (ixgmq[i]->rxaddr_ >> 32) & 0xFFFFFFFF);
 
   // set to number of bytes allocated for receive descriptor ring
   WriteRdlen_1(i, ixgmq[i]->rx_size_bytes_);
@@ -1269,22 +1272,44 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i, uint8_t rcv_vector) {
   
   // add buffer to each descriptor
   for (auto j = 0; j < 256 - 1; j++) {
-    auto rxphys =reinterpret_cast<uint64_t>((ixgmq[i]->circ_buffer[j])->MutData());
-    auto tail = ixgmq[i]->rx_tail;
+    auto rxphys =reinterpret_cast<uint64_t>((ixgmq[i]->circ_buffer_[j])->MutData());
+    auto tail = ixgmq[i]->rx_tail_;
     
     // update buffer address for descriptor
-    ixgmq[i]->rx_ring[tail].buffer_address = rxphys;
-    ixgmq[i]->rx_tail = (tail + 1) % ixgmq[i]->rx_size;
+    ixgmq[i]->rx_ring_[tail].buffer_address = rxphys;
+    ixgmq[i]->rx_tail_ = (tail + 1) % ixgmq[i]->rx_size_;
   }
 
   // bump tail pts via register rdt to enable descriptor fetching by setting to
   // length of ring minus one
-  WriteRdt_1(i, ixgmq[i]->rx_tail);
+  WriteRdt_1(i, ixgmq[i]->rx_tail_);
   
-  ebbrt::kprintf("RX Queue setup complete - head=%d tail=%d\n\n", ixgmq[i]->rx_head,
-		 ixgmq[i]->rx_tail);
+  ebbrt::kprintf("RX Queue setup complete - head=%d tail=%d\n\n", ixgmq[i]->rx_head_,
+		 ixgmq[i]->rx_tail_);
   
+  // program base address registers
+  WriteTdbal(i, ixgmq[i]->txaddr_ & 0xFFFFFFFF);
+  WriteTdbah(i, (ixgmq[i]->txaddr_ >> 32) & 0xFFFFFFFF);
+
+  // length must also be 128 byte aligned
+  WriteTdlen(i, ixgmq[i]->tx_size_bytes_);
+
+   //Head_WB_En = 1
+  WriteTdwbal(i, (ixgmq[i]->txhwbaddr_ & 0xFFFFFFFF) | 0x1);
+  WriteTdwbah(i, (ixgmq[i]->txhwbaddr_ >> 32) & 0xFFFFFFFF);
   
+  // enable transmit path
+  WriteDmatxctl_te(0x1);
+  
+  // transmit queue enable
+  WriteTxdctl(i, 0x1 << 25);
+
+  // poll until set, TODO: Timeout
+  while (ReadTxdctl_enable(i) == 0);
+  ebbrt::kprintf("TX queue enabled\n");
+  
+  // TODO: set up dca txctrl FreeBSD?
+  WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
 }
 
 void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {  
@@ -1474,7 +1499,7 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
 // IxgbeDriverRep
 uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr) {
   rdesc_legacy_t tmp;
-  tmp = ixgq_.rx_ring[ixgq_.rx_head];
+  tmp = ixgmq_.rx_ring_[ixgmq_.rx_head_];
 
   std::atomic_thread_fence(std::memory_order_release);
 
@@ -1486,11 +1511,11 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr) {
     *bAddr = tmp.buffer_address;
 
     // reset descriptor
-    ixgq_.rx_ring[ixgq_.rx_head].raw[0] = 0;
-    ixgq_.rx_ring[ixgq_.rx_head].raw[1] = 0;
+    ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0] = 0;
+    ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[1] = 0;
 
     // bump head ptr
-    ixgq_.rx_head = (ixgq_.rx_head + 1) % ixgq_.rx_size;
+    ixgmq_.rx_head_ = (ixgmq_.rx_head_ + 1) % ixgmq_.rx_size_;
 
     return 0;
   }
@@ -1506,17 +1531,17 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   while (GetRxBuf(&len, &bAddr) == 0) {
 
     // done with buffer addr above, now to reuse it
-    auto tail = ixgq_.rx_tail;
-    ixgq_.rx_ring[tail].buffer_address = bAddr;
+    auto tail = ixgmq_.rx_tail_;
+    ixgmq_.rx_ring_[tail].buffer_address = bAddr;
 
     // bump tail ptr
-    ixgq_.rx_tail = (tail + 1) % ixgq_.rx_size;
+    ixgmq_.rx_tail_ = (tail + 1) % ixgmq_.rx_size_;
 
     count++;
     
     if (count > 0) {
       ebbrt::kprintf("** %s **\n", __FUNCTION__);
-      root_.itf_.Receive(std::move(ixgq_.circ_buffer[ixgq_.rx_tail]));
+      root_.itf_.Receive(std::move(ixgmq_.circ_buffer_[ixgmq_.rx_tail_]));
     }
   }
   
@@ -1524,15 +1549,15 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   if(count > 0)
   {
     // update reg
-    //WriteRdt_1(n, ixgq_.rx_tail);
+    WriteRdt_1(Cpu::GetMine(), ixgmq_.rx_tail_);
     //ebbrt::kprintf("\t rx_head->%d rx_tail->%d \n", ixgq_.rx_head, ixgq_.rx_tail);
   }
 }
 
 ebbrt::IxgbeDriverRep::IxgbeDriverRep(const IxgbeDriver& root)
-    : root_(root), ixgq_(root_.GetQueue()),
-      receive_callback_([this]() { ReceivePoll(); }) {
-  // check if core 0
+  : root_(root), ixgq_(root_.GetQueue()), ixgmq_(root.GetMultiQueue(Cpu::GetMine())),
+    receive_callback_([this]() { ReceivePoll(); }) {
+  ebbrt::kprintf("%s for Core %d\n", __FUNCTION__, Cpu::GetMine());
 }
 
 uint16_t ebbrt::IxgbeDriverRep::ReadRdh_1(uint32_t n) {

@@ -129,21 +129,22 @@ class IxgbeDriver : public EthernetDevice {
 	  )
 	);
 
-      rxaddr = reinterpret_cast<uint64_t>(rx_ring_);
-      txaddr = reinterpret_cast<uint64_t>(tx_ring_);
-      txhwbaddr = reinterpret_cast<uint64_t>(tx_head_);
+      rxaddr_ = reinterpret_cast<uint64_t>(rx_ring_);
+      txaddr_ = reinterpret_cast<uint64_t>(tx_ring_);
+      txhwbaddr_ = reinterpret_cast<uint64_t>(tx_head_);
       rx_size_bytes_ = sizeof(rdesc_legacy_t) * NRXDESCS;
       tx_size_bytes_ = sizeof(tdesc_legacy_t) * NTXDESCS;
 
-      // rxaddr and txaddr must be 128 byte aligned
-      assert((rxaddr & 0x7F) == 0);
-      assert((txaddr & 0x7F) == 0);
+      // must be 128 byte aligned
+      assert((rxaddr_ & 0x7F) == 0);
+      assert((txaddr_ & 0x7F) == 0);
       assert((rx_size_bytes & 0x7F) == 0);
-      
+      assert((tx_size_bytes & 0x7F) == 0);
+
       // txhwbaddr must be byte aligned
-      assert((txhwbaddr & 0x3) == 0);
+      assert((txhwbaddr_ & 0x3) == 0);
       
-      ebbrt::kprintf("Core %d: rx_addr = %p, tx_addr = %p, txhwbaddr = %p\n", Cpu::GetMine(), rxaddr, txaddr, txhwbaddr);
+      ebbrt::kprintf("Core %d: rx_addr = %p, tx_addr = %p, txhwbaddr = %p\n", Cpu::GetMine(), rxaddr_, txaddr_, txhwbaddr_);
     }
 
     size_t rx_head_;
@@ -155,9 +156,9 @@ class IxgbeDriver : public EthernetDevice {
     size_t idx_;
     size_t rx_size_bytes_;
     size_t tx_size_bytes_;
-    uint64_t rxaddr;
-    uint64_t txaddr;
-    uint64_t txhwbaddr;
+    uint64_t rxaddr_;
+    uint64_t txaddr_;
+    uint64_t txhwbaddr_;
     
     std::vector<std::unique_ptr<MutIOBuf>> circ_buffer_;
     
@@ -172,7 +173,7 @@ class IxgbeDriver : public EthernetDevice {
   EbbRef<IxgbeDriverRep> ebb_;
   NetworkManager::Interface& itf_;
   EthernetAddress mac_addr_;
-
+  
   void InitStruct();
   void DeviceInfo();
   void Init();
@@ -274,6 +275,10 @@ class IxgbeDriver : public EthernetDevice {
   void WriteIvarAllocval0(uint32_t n, uint32_t m);
   void WriteIvarAlloc1(uint32_t n, uint32_t m);
   void WriteIvarAllocval1(uint32_t n, uint32_t m);
+  void WriteIvarAlloc2(uint32_t n, uint32_t m);
+  void WriteIvarAllocval2(uint32_t n, uint32_t m);
+  void WriteIvarAlloc3(uint32_t n, uint32_t m);
+  void WriteIvarAllocval3(uint32_t n, uint32_t m);
 
   void WriteSecrxctrl_Rx_Dis(uint32_t m);
 
@@ -330,6 +335,8 @@ class IxgbeDriver : public EthernetDevice {
 
   e10k_queue_t& GetQueue() const { return *ixgq; }
 
+  e10Kq& GetMultiQueue(size_t index) const { return *ixgmq[index]; }
+  
   pci::Device& dev_;
   pci::Bar& bar0_;
 
@@ -340,7 +347,8 @@ class IxgbeDriver : public EthernetDevice {
   };
 
   e10k_queue_t* ixgq;
-
+  uint8_t rcv_vector {0};
+  
   std::vector<std::unique_ptr<e10Kq>> ixgmq;
 
   friend class IxgbeDriverRep;
@@ -366,6 +374,8 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
 
   const IxgbeDriver& root_;
   e10k_queue_t& ixgq_;
+  IxgbeDriver::e10Kq& ixgmq_;
+  
   EventManager::IdleCallback receive_callback_;
 
 };  // class IxgbeDriverRep
