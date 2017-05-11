@@ -393,6 +393,7 @@ bool ebbrt::pci::Device::MsixEnable() {
   auto& msix_bar = GetBar(msix_bar_idx_);
   msix_bar.Map();
 
+  // disables device from generating legacy INT
   DisableInt();
 
   auto ctrl = MsixGetControl();
@@ -440,11 +441,25 @@ void ebbrt::pci::Device::MsixUnmaskEntry(size_t idx) {
   msix_bar.Write32(offset, ctrl);
 }
 
+/*
+ * entry - indicates the entry offset in MSI-X table structure
+ *         from 0 to 255, although MSI-X vectors > 63 only usable by VFs in IOV
+ *
+ * vector - interrupt vector to send
+ *
+ * dest - destination APIC where interrupt should be sent
+ */
 void ebbrt::pci::Device::SetMsixEntry(size_t entry, uint8_t vector,
                                       uint8_t dest) {
   auto& msix_bar = GetBar(msix_bar_idx_);
   auto offset = msix_table_offset_ + entry * kMsixTableEntrySize;
-  msix_bar.Write32(offset + kMsixTableEntryAddr, 0xFEE00000 | dest << 12);
+  msix_bar.Write32(offset + kMsixTableEntryAddrLow, 0xFEE00000 | dest << 12);
+  msix_bar.Write32(offset + kMsixTableEntryAddrHigh, 0x0);
   msix_bar.Write32(offset + kMsixTableEntryData, vector);
+  
+  ebbrt::kprintf("%s msix_index = %d, ", __FUNCTION__, entry);
+  ebbrt::kprintf("dest apic 0x%X at address %p, ", 0xFEE00000 | dest << 12, offset + kMsixTableEntryAddr);
+  ebbrt::kprintf("vector 0x%X at address %p\n", vector, offset + kMsixTableEntryData);
+  
   MsixUnmaskEntry(entry);
 }

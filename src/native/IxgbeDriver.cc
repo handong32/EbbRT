@@ -115,7 +115,8 @@ void ebbrt::IxgbeDriverRep::AddTx(const unsigned char *pa, uint64_t len, bool fi
 void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   auto dp = buf->GetDataPointer();
   auto len = buf->ComputeChainDataLength();
-  assert(len < 0xA0 * 1000);
+  //kassert(len < 0xA0 * 1000);
+  ebbrt::kbugon(len >= 0xA0 * 1000, "%s packet len bigger than max ether length\n", __FUNCTION__);
   // get a single buffer of data
   auto txbuf = dp.Get(len * sizeof(uint8_t));
   
@@ -142,7 +143,7 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   WriteTdt_1(Cpu::GetMine(), ixgmq_.tx_tail_); // indicates position beyond last descriptor hw
 
   // TODO: removing this causes general protection fault in Timer code??
-  ebbrt::clock::SleepMilli(1000);
+  //ebbrt::clock::SleepMilli(1000);
   
   // TODO: when and where to update tx_head
   //ixgq_.tx_head = ixgq_.tx_hwb[0] % ixgq_.tx_size;
@@ -280,7 +281,8 @@ void ebbrt::IxgbeDriver::ReadEicr() {
   uint32_t reg;
   reg = bar0_.Read32(0x00898);
   // ebbrt::kprintf("0x00898: GPIE 0x%08X\n", reg);
-  assert(!(reg & 0x20));  // make sure GPIE.OCD is cleared
+  ebbrt::kbugon((reg & 0x20), "GPIE.OCD not cleared\n");
+  //kassert(!(reg & 0x20));  // make sure GPIE.OCD is cleared
 
   reg = bar0_.Read32(0x00800);
   ebbrt::kprintf("First Read - 0x00800: EICR 0x%08X, ", reg);
@@ -311,6 +313,22 @@ void ebbrt::IxgbeDriver::WriteEiac(uint32_t m) {
 void ebbrt::IxgbeDriver::WriteEimsn(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x00AA0 + 4 * n);
   bar0_.Write32(0x00AA0 + 4 * n, reg | m);
+}
+
+// 8.2.3.5.12
+// Extended Interrupt Throttle Registers — EITR[n]
+// (0x00820 + 4*n, n=0...23 and 0x012300 + 4*(n-24),
+// n=24...128; RW)
+void ebbrt::IxgbeDriver::WriteEitr(uint32_t n, uint32_t m) {
+
+  ebbrt::kbugon(n > 128, "%s error\n", __FUNCTION__);
+
+  if (n < 24) {
+    bar0_.Write32(0x00820 + 4*n, m);
+  }
+  else {
+    bar0_.Write32(0x012300 + 4*(n-24), m);
+  }
 }
 
 // 8.2.3.9.10 Transmit Descriptor Control — TXDCTL[n] (0x06028+0x40*n,
@@ -705,7 +723,7 @@ void ebbrt::IxgbeDriver::WriteRdbal_2(uint32_t n, uint32_t m) {
 // 8.2.3.8.2 Receive Descriptor Base Address High — RDBAH[n] (0x01004 + 0x40*n,
 // n=0...63 and 0x0D004 + 0x40*(n-64), n=64...127; RW)
 void ebbrt::IxgbeDriver::WriteRdbah_1(uint32_t n, uint32_t m) {
-  ebbrt::kprintf("%s 0x%X\n", __FUNCTION__, m);
+  //ebbrt::kprintf("%s 0x%X\n", __FUNCTION__, m);
   bar0_.Write32(0x01004 + 0x40 * n, m);
 }
 void ebbrt::IxgbeDriver::WriteRdbah_2(uint32_t n, uint32_t m) {
@@ -1201,13 +1219,15 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
     rcv_vector =
       event_manager->AllocateVector([this]() { ebb_->ReceivePoll(); });
   }
+  
+  ebbrt::kprintf("%s for Core %d, rcv_vector = 0x%X\n", __FUNCTION__, i, rcv_vector);
 
   // allocate memory for descriptor rings
   ixgmq[i].reset(new e10Kq(i, Cpu::GetMyNode()));
   
   // not going to set up receive descripts greater than 63
-  assert(i < 64);
-
+  ebbrt::kbugon(i >= 64, "can't set up descriptors greater than 63\n");
+  
   // update register RDBAL, RDBAH with receive descriptor base address
   WriteRdbal_1(i, ixgmq[i]->rxaddr_ & 0xFFFFFFFF);
   WriteRdbah_1(i, (ixgmq[i]->rxaddr_ >> 32) & 0xFFFFFFFF);
@@ -1230,36 +1250,49 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   // Set head and tail pointers
   WriteRdt_1(i, 0x0);
   WriteRdh_1(i, 0x0);
-  ebbrt::kprintf("RX queue enabled\n");
+  //ebbrt::kprintf("RX queue enabled\n");
   
   // setup RX interrupts for queue i
-  dev_.SetMsixEntry(i * 2, rcv_vector, i);
+  
+  dev_.SetMsixEntry(i, rcv_vector, ebbrt::Cpu::GetByIndex(i)->apic_id());
+  ebbrt::kprintf("apic_id = %d\n", ebbrt::Cpu::GetByIndex(i)->apic_id());
   
   // don't set up interrupts for tx since we have head writeback??
   auto qn = i / 2; // put into correct IVAR
+  
   if((i % 2) == 0) { // check if 2xN or 2xN + 1
-    WriteIvarAlloc0(qn, i*2); // rx interrupt allocation corresponds to index i * 2 in MSI-X table
+    WriteIvarAlloc0(qn, i); // rx interrupt allocation corresponds to index i * 2 in MSI-X table
+    
     WriteIvarAllocval0(qn, 0x1 << 7);
+    
+    ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i, 0x1 << 7);
   }
   else {
-    WriteIvarAlloc2(qn, (i*2) << 16);
+    WriteIvarAlloc2(qn, i << 16);
+    
     WriteIvarAllocval2(qn, 0x1 << 23);
+    
+    ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i << 16, 0x1 << 23);
   }
+  
+  // no interrupt throttling for msix index i
+  WriteEitr(i, 0x0);
   
   // 7.3.1.4 - Note that there are no EIAC(1)...EIAC(2) registers.
   // The hardware setting for interrupts 16...63 is always auto clear.
-  
   if(i < 16) {
     // enable auto clear
     WriteEiac(0x1 << i);
-    
-    // enable interrupt
-    WriteEimsn(i, 0x1 << i);
-    
-    // make sure interupt is cleared
-    WriteEicr(0x1 << i);
   }
   
+  // enable interrupt
+  WriteEimsn(i / 32, (0x1 << (i % 32)));
+  
+  // make sure interupt is cleared
+  if (i < 16) {
+    WriteEicr(0x1 << i);
+  }
+
   // Enable RX
   // disable RX_DIS
   WriteSecrxctrl_Rx_Dis(0x1 << 1);
@@ -1268,7 +1301,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   WriteRxctrl(0x1);
   // enable RX_DIS
   WriteSecrxctrl_Rx_Dis(0x0 << 1);
-  ebbrt::kprintf("RX enabled\n");
+  //ebbrt::kprintf("RX enabled\n");
   
   // add buffer to each descriptor
   for (auto j = 0; j < 256 - 1; j++) {
@@ -1284,8 +1317,8 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   // length of ring minus one
   WriteRdt_1(i, ixgmq[i]->rx_tail_);
   
-  ebbrt::kprintf("RX Queue setup complete - head=%d tail=%d\n\n", ixgmq[i]->rx_head_,
-		 ixgmq[i]->rx_tail_);
+  //ebbrt::kprintf("RX Queue setup complete - head=%d tail=%d\n", ixgmq[i]->rx_head_,
+  //ixgmq[i]->rx_tail_);
   
   // program base address registers
   WriteTdbal(i, ixgmq[i]->txaddr_ & 0xFFFFFFFF);
@@ -1306,10 +1339,12 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
 
   // poll until set, TODO: Timeout
   while (ReadTxdctl_enable(i) == 0);
-  ebbrt::kprintf("TX queue enabled\n");
+  //ebbrt::kprintf("TX queue enabled\n");
   
   // TODO: set up dca txctrl FreeBSD?
   WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
+
+  ebbrt::kprintf("%s DONE\n\n", __FUNCTION__);
 }
 
 void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {  
@@ -1359,14 +1394,15 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
                  rxaddrh);
 
   // rxaddrl must be 128 byte aligned, lower 7 bits == 0
-  assert((rxaddrl & 0x7F) == 0);
+  
+  //kassert((rxaddrl & 0x7F) == 0);
 
   // update register RDBAL, RDBAH with receive descriptor base address
   WriteRdbal_1(i, rxaddrl);
   WriteRdbah_1(i, rxaddrh);
 
   // length must also be 128 byte aligned
-  assert((rx_size & 0x7F) == 0);
+  //kassert((rx_size & 0x7F) == 0);
   // set to number of bytes allocated for receive descriptor ring
   WriteRdlen_1(i, rx_size);
 
@@ -1419,7 +1455,7 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
 
   // Add RX Buffers to ring
   //rxbuf = malloc(RXBUFSZ * (NRXDESCS - 1));
-  //assert(rxbuf != NULL);
+  //kassert(rxbuf != NULL);
   //memset(rxbuf, 0, RXBUFSZ * (NRXDESCS - 1));
 
   //ebbrt::kprintf("Allocated RX buffer: %p\n", rxbuf);
@@ -1461,19 +1497,19 @@ void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {
   ebbrt::kprintf("txaddr: %p txaddrl: %p txaddrh: %p\n", txaddr, txaddrl,
                  txaddrh);
   // txaddrl must be 128 byte aligned, lower 7 bits == 0
-  assert((txaddrl & 0x7F) == 0);
+  //kassert((txaddrl & 0x7F) == 0);
 
   // program base address registers
   WriteTdbal(i, txaddrl);
   WriteTdbah(i, txaddrh);
 
   // length must also be 128 byte aligned
-  assert((tx_size & 0x7F) == 0);
+  //kassert((tx_size & 0x7F) == 0);
   WriteTdlen(i, tx_size);
 
   // set up head wb
   uint64_t txhwbaddr = reinterpret_cast<uint64_t>(ixgq->tx_head);
-  assert((txhwbaddr & 0x3) == 0); //lower 2 bits = 0
+  //kassert((txhwbaddr & 0x3) == 0); //lower 2 bits = 0
   uint32_t txhwbaddrl = txhwbaddr & 0xFFFFFFFF;
   uint32_t txhwbaddrh = (txhwbaddr >> 32) & 0xFFFFFFFF;
   WriteTdwbal(i, txhwbaddrl | 0x1); //HGead_WB_En = 1

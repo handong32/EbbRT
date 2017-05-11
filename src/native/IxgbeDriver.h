@@ -99,7 +99,7 @@ class IxgbeDriver : public EthernetDevice {
 	circ_buffer_.emplace_back(MakeUniqueIOBuf(RXBUFSZ, true));
       }
       
-      auto sz = align::Up(sizeof(rdesc_legacy_t) * NTXDESCS +
+      /*auto sz = align::Up(sizeof(rdesc_legacy_t) * NTXDESCS +
 			  sizeof(tdesc_legacy_t) * NRXDESCS +
 			  sizeof(bool) * NTXDESCS +
 			  sizeof(uint32_t) * 4, 4096);
@@ -117,17 +117,47 @@ class IxgbeDriver : public EthernetDevice {
 	  )
 	);
       
-      tx_isctx_ = static_cast<bool*>(
+	tx_isctx_ = static_cast<bool*>(
 	static_cast<void*>(
 	  reinterpret_cast<char*>(tx_ring_) + NTXDESCS * sizeof(tdesc_legacy_t)
 	  )
 	);
       
-      tx_head_ = static_cast<uint32_t*>(	
+	tx_head_ = static_cast<uint32_t*>(	
 	static_cast<void*>(
 	  reinterpret_cast<char*>(tx_isctx_) + NTXDESCS * sizeof(bool)
 	  )
-	);
+	);*/
+      
+      // RX
+      auto sz = align::Up(sizeof(rdesc_legacy_t) * NRXDESCS, 4096);
+      auto order = Fls(sz - 1) - pmem::kPageShift + 1;
+      auto page = page_allocator->Alloc(order, nid);
+      kbugon(page == Pfn::None(), "ixgbe: page allocation failed in %s", __FUNCTION__);
+      auto addr = reinterpret_cast<void*>(page.ToAddr());
+      memset(addr, 0, sz);
+      rx_ring_ = static_cast<rdesc_legacy_t*>(addr);
+      
+      // TX
+      sz = align::Up(sizeof(tdesc_legacy_t) * NTXDESCS, 4096);
+      order = Fls(sz - 1) - pmem::kPageShift + 1;
+      page = page_allocator->Alloc(order, nid);
+      kbugon(page == Pfn::None(), "ixgbe: page allocation failed in %s", __FUNCTION__);
+      addr = reinterpret_cast<void*>(page.ToAddr());
+      memset(addr, 0, sz);
+      tx_ring_ = static_cast<tdesc_legacy_t*>(addr);
+
+      // context
+      sz = align::Up(sizeof(bool) * NTXDESCS, 4096);
+      order = Fls(sz - 1) - pmem::kPageShift + 1;
+      page = page_allocator->Alloc(order, nid);
+      kbugon(page == Pfn::None(), "ixgbe: page allocation failed in %s", __FUNCTION__);
+      addr = reinterpret_cast<void*>(page.ToAddr());
+      memset(addr, 0, sz);
+      tx_isctx_ = static_cast<bool*>(addr);
+
+      // head wb addr
+      tx_head_ = (uint32_t*) malloc (4 * sizeof(uint32_t));
 
       rxaddr_ = reinterpret_cast<uint64_t>(rx_ring_);
       txaddr_ = reinterpret_cast<uint64_t>(tx_ring_);
@@ -136,15 +166,16 @@ class IxgbeDriver : public EthernetDevice {
       tx_size_bytes_ = sizeof(tdesc_legacy_t) * NTXDESCS;
 
       // must be 128 byte aligned
-      assert((rxaddr_ & 0x7F) == 0);
-      assert((txaddr_ & 0x7F) == 0);
-      assert((rx_size_bytes & 0x7F) == 0);
-      assert((tx_size_bytes & 0x7F) == 0);
+      ebbrt::kbugon((rxaddr_ & 0x7F) != 0, "rx_addr_ not 128 byte aligned\n");
+      ebbrt::kbugon((txaddr_ & 0x7F) != 0, "tx_addr_ not 128 byte aligned\n");
+      ebbrt::kbugon((rx_size_bytes_ & 0x7F) != 0, "rx_size_bytes_ not 128 byte aligned\n");
+      ebbrt::kbugon((tx_size_bytes_ & 0x7F) != 0, "tx_size_bytes_ not 128 byte aligned\n");
 
       // txhwbaddr must be byte aligned
-      assert((txhwbaddr_ & 0x3) == 0);
+      ebbrt::kbugon((txhwbaddr_ & 0x3) != 0, "txhwbaddr not byte aligned\n");
+      kassert((txhwbaddr_ & 0x3) == 0);
       
-      ebbrt::kprintf("Core %d: rx_addr = %p, tx_addr = %p, txhwbaddr = %p\n", Cpu::GetMine(), rxaddr_, txaddr_, txhwbaddr_);
+      ebbrt::kprintf("%s: rx_addr = %p, tx_addr = %p, txhwbaddr = %p, rx_size_bytes_ = %p, tx_size_bytes_ = %p\n", __FUNCTION__, rxaddr_, txaddr_, txhwbaddr_, rx_size_bytes_, tx_size_bytes_);
     }
 
     size_t rx_head_;
@@ -162,7 +193,7 @@ class IxgbeDriver : public EthernetDevice {
     
     std::vector<std::unique_ptr<MutIOBuf>> circ_buffer_;
     
-    void* addr_;
+    //void* addr_;
     rdesc_legacy_t* rx_ring_;
     tdesc_legacy_t* tx_ring_;
     bool* tx_isctx_;
@@ -204,6 +235,8 @@ class IxgbeDriver : public EthernetDevice {
   void WriteDmatxctl_te(uint32_t m);
 
   void WriteEimc(uint32_t m);
+  void WriteEitr(uint32_t n, uint32_t m);
+
   void WriteTxdctl(uint32_t n, uint32_t m);
 
   void WriteRxdctl_1(uint32_t n, uint32_t m);

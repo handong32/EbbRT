@@ -169,6 +169,8 @@ class Device : public Function {
   static const constexpr size_t kMsixTableEntryAddr = 0;
   static const constexpr size_t kMsixTableEntryData = 8;
   static const constexpr size_t kMsixTableEntryControl = 12;
+  static const constexpr size_t kMsixTableEntryAddrLow = 0;
+  static const constexpr size_t kMsixTableEntryAddrHigh = 4;
 
   static const constexpr uint32_t kMsixTableEntryControlMaskBit = 1;
 
