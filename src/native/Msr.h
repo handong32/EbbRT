@@ -30,6 +30,12 @@ inline uint64_t Read(uint32_t index) {
 inline void Write(uint32_t index, uint64_t data) {
   uint32_t low = data;
   uint32_t high = data >> 32;
+  
+  //TODO - HACK, GP fault happens when writing a 1 to bit #3
+  if( (((data >> 2) & 0x1) == 1) && index == 0x83e ) {
+    low = 0xb;
+    high = 0x0;
+  }
   asm volatile("wrmsr" : : "c"(index), "a"(low), "d"(high));
 }
 }  // namespace msr
