@@ -137,7 +137,7 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     AddTx(txbuf, len, true, true, -1, false, false);
   }
   
-  ebbrt::kprintf("** %s **\n", __FUNCTION__);
+  //ebbrt::kprintf("** %s **\n", __FUNCTION__);
   
   // bump tx_tail
   WriteTdt_1(Cpu::GetMine(), ixgmq_.tx_tail_); // indicates position beyond last descriptor hw
@@ -147,7 +147,7 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   
   // TODO: when and where to update tx_head
   //ixgq_.tx_head = ixgq_.tx_hwb[0] % ixgq_.tx_size;
-  ebbrt::kprintf("\t tx_head->%d tx_tail->%d \n", ixgmq_.tx_head_[0], ixgmq_.tx_tail_);
+  //ebbrt::kprintf("\t tx_head->%d tx_tail->%d \n", ixgmq_.tx_head_[0], ixgmq_.tx_tail_);
 }
 
 void ebbrt::IxgbeDriver::InitStruct() {
@@ -1576,7 +1576,8 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
     count++;
     
     if (count > 0) {
-      ebbrt::kprintf("** %s **\n", __FUNCTION__);
+      //TODO hack
+      ixgmq_.circ_buffer_[ixgmq_.rx_tail_]->TrimEnd(ixgmq_.circ_buffer_[ixgmq_.rx_tail_]->ComputeChainDataLength() - len);
       root_.itf_.Receive(std::move(ixgmq_.circ_buffer_[ixgmq_.rx_tail_]));
     }
   }
@@ -1586,7 +1587,6 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   {
     // update reg
     WriteRdt_1(Cpu::GetMine(), ixgmq_.rx_tail_);
-    //ebbrt::kprintf("\t rx_head->%d rx_tail->%d \n", ixgq_.rx_head, ixgq_.rx_tail);
   }
 }
 
@@ -1605,7 +1605,7 @@ void ebbrt::IxgbeDriverRep::WriteRdt_1(uint32_t n, uint32_t m) {
 }
 
 void ebbrt::IxgbeDriverRep::Run() {
-  ebbrt::kprintf("%s\n", __FUNCTION__);
+  //ebbrt::kprintf("%s\n", __FUNCTION__);
   while (1) {
     ReceivePoll();
   }
