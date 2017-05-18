@@ -115,8 +115,9 @@ void ebbrt::IxgbeDriverRep::AddTx(const unsigned char *pa, uint64_t len, bool fi
 void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   auto dp = buf->GetDataPointer();
   auto len = buf->ComputeChainDataLength();
-  //kassert(len < 0xA0 * 1000);
+  
   ebbrt::kbugon(len >= 0xA0 * 1000, "%s packet len bigger than max ether length\n", __FUNCTION__);
+  
   // get a single buffer of data
   auto txbuf = dp.Get(len * sizeof(uint8_t));
   
@@ -137,17 +138,10 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     AddTx(txbuf, len, true, true, -1, false, false);
   }
   
-  //ebbrt::kprintf("** %s **\n", __FUNCTION__);
+  //ebbrt::kprintf("%s tx_tail_ -> %d\n", __FUNCTION__, ixgmq_.tx_tail_);
   
   // bump tx_tail
   WriteTdt_1(Cpu::GetMine(), ixgmq_.tx_tail_); // indicates position beyond last descriptor hw
-
-  // TODO: removing this causes general protection fault in Timer code??
-  //ebbrt::clock::SleepMilli(1000);
-  
-  // TODO: when and where to update tx_head
-  //ixgq_.tx_head = ixgq_.tx_hwb[0] % ixgq_.tx_size;
-  //ebbrt::kprintf("\t tx_head->%d tx_tail->%d \n", ixgmq_.tx_head_[0], ixgmq_.tx_tail_);
 }
 
 void ebbrt::IxgbeDriver::InitStruct() {
@@ -1250,10 +1244,8 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   // Set head and tail pointers
   WriteRdt_1(i, 0x0);
   WriteRdh_1(i, 0x0);
-  //ebbrt::kprintf("RX queue enabled\n");
   
   // setup RX interrupts for queue i
-  
   dev_.SetMsixEntry(i, rcv_vector, ebbrt::Cpu::GetByIndex(i)->apic_id());
   ebbrt::kprintf("apic_id = %d\n", ebbrt::Cpu::GetByIndex(i)->apic_id());
   
@@ -1576,15 +1568,27 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
     count++;
     
     if (count > 0) {
-      //TODO hack
-      ixgmq_.circ_buffer_[ixgmq_.rx_tail_]->TrimEnd(ixgmq_.circ_buffer_[ixgmq_.rx_tail_]->ComputeChainDataLength() - len);
-      root_.itf_.Receive(std::move(ixgmq_.circ_buffer_[ixgmq_.rx_tail_]));
+      auto tail = ixgmq_.rx_tail_;
+      
+      //TODO hack - need to set actual length of data
+      ixgmq_.circ_buffer_[tail]->SetLength(len);
+
+      //TODO hack - need to reallocate IOBuf after its been moved to Receive
+      auto b = std::move(ixgmq_.circ_buffer_[tail]);
+      
+      ixgmq_.circ_buffer_[tail] = std::move(MakeUniqueIOBuf(IxgbeDriver::RXBUFSZ));
+      auto rxphys = reinterpret_cast<uint64_t>((ixgmq_.circ_buffer_[tail])->MutData());
+      
+      ixgmq_.rx_ring_[tail].buffer_address = rxphys;
+      
+      root_.itf_.Receive(std::move(b));
     }
   }
   
   // TODO: Update tail register here or above?
   if(count > 0)
   {
+    //ebbrt::kprintf("%s rx_tail_ -> %d\n", __FUNCTION__, ixgmq_.tx_tail_);
     // update reg
     WriteRdt_1(Cpu::GetMine(), ixgmq_.rx_tail_);
   }

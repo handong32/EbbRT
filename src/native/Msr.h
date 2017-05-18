@@ -31,9 +31,9 @@ inline void Write(uint32_t index, uint64_t data) {
   uint32_t low = data;
   uint32_t high = data >> 32;
   
-  //TODO - HACK, GP fault happens when writing a 1 to bit #3
-  if( (((data >> 2) & 0x1) == 1) && index == 0x83e ) {
-    low = 0xb;
+  //TODO - HACK, GP fault happens when writing a 1 to bit #3 for kX2apicDcr
+  if( (((data >> 2) & 0x1) == 1) && index == kX2apicDcr ) {
+    low = (data & 0x3) | ((data & 0x4) << 1);
     high = 0x0;
   }
   asm volatile("wrmsr" : : "c"(index), "a"(low), "d"(high));
