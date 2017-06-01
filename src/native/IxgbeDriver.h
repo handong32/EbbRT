@@ -86,7 +86,10 @@ class IxgbeDriver : public EthernetDevice {
    */
   static const constexpr uint32_t NTXDESCS = 256;
   static const constexpr uint32_t NRXDESCS = 256;
+  //static const constexpr uint32_t NTXDESCS = 4096;
+  //static const constexpr uint32_t NRXDESCS = 4096;
   static const constexpr uint32_t RXBUFSZ = 2048;
+  //static const constexpr uint32_t RXBUFSZ = 16384;
 
   class e10Kq {
   public:    
@@ -128,7 +131,9 @@ class IxgbeDriver : public EthernetDevice {
 	  reinterpret_cast<char*>(tx_isctx_) + NTXDESCS * sizeof(bool)
 	  )
 	);*/
-      
+
+      txbuffer = (uint8_t*) malloc (sizeof(uint8_t) * 4096);
+	
       // RX
       auto sz = align::Up(sizeof(rdesc_legacy_t) * NRXDESCS, 4096);
       auto order = Fls(sz - 1) - pmem::kPageShift + 1;
@@ -198,6 +203,7 @@ class IxgbeDriver : public EthernetDevice {
     tdesc_legacy_t* tx_ring_;
     bool* tx_isctx_;
     uint32_t *tx_head_;
+    uint8_t *txbuffer;
   };
 
  private:
@@ -211,7 +217,7 @@ class IxgbeDriver : public EthernetDevice {
   void PhyInit();
   void StopDevice();
   void GlobalReset();
-  void SetupQueue(uint32_t i);
+  //void SetupQueue(uint32_t i);
   void SetupMultiQueue(uint32_t i);
 
   bool SwsmSmbiRead();
@@ -403,6 +409,7 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
   uint16_t ReadRdh_1(uint32_t n);
   void WriteRdt_1(uint32_t n, uint32_t m);
   void WriteTdt_1(uint32_t n, uint32_t m);
+  void WriteEimcn(uint32_t n, uint32_t m);
   uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr);
 
   const IxgbeDriver& root_;

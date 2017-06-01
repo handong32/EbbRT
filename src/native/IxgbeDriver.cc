@@ -24,14 +24,10 @@ void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   ixgbe_dev->ebb_ =
       IxgbeDriverRep::Create(ixgbe_dev, ebb_allocator->AllocateLocal());
   
-  //auto rcv_vector =
-  //event_manager->AllocateVector([this]() { ixgbe_dev->ebb_.ReceivePoll(); });
-  
   for(size_t i = 0; i < Cpu::Count(); i++) {
     ixgbe_dev->SetupMultiQueue(i);
   }
   
-  //ixgbe_dev->SetupQueue(0);
   ebbrt::clock::SleepMilli(200);
   ebbrt::kprintf("intel 82599 card initialzed\n");
 }
@@ -88,6 +84,7 @@ void ebbrt::IxgbeDriverRep::AddTx(const unsigned char *pa, uint64_t len, bool fi
   actx->raw[1] = 0x0;
   
   actx->address = reinterpret_cast<uint64_t>(pa);
+  ebbrt::kprintf("actx->address = %p\n", actx->address);
   actx->dtalen = len;
   if(first) {
     actx->paylen = len;
@@ -121,6 +118,10 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   // get a single buffer of data
   auto txbuf = dp.Get(len * sizeof(uint8_t));
   
+  //for(size_t i = 0; i < len; i ++) {
+  //  ixgmq_.txbuffer[i] = txbuf[i];
+  //}
+  
   if(pinfo.flags & PacketInfo::kNeedsCsum) {
     if(pinfo.csum_offset == 6) {
       AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_udp);
@@ -131,15 +132,21 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     else {
       ebbrt::kabort("%s unknown packet type checksum\n", __FUNCTION__);
     }
-    
-    AddTx(txbuf, len, true, true, 0, false, true);    
+
+    AddTx(txbuf, len, true, true, 0, false, true);
+    //AddTx(ixgmq_.txbuffer, len, true, true, 0, false, true);    
   } 
   else {
     AddTx(txbuf, len, true, true, -1, false, false);
+    //AddTx(ixgmq_.txbuffer, len, true, true, -1, false, false);
   }
   
-  //ebbrt::kprintf("%s tx_tail_ -> %d\n", __FUNCTION__, ixgmq_.tx_tail_);
-  
+  ebbrt::kprintf("%s txbuf = %p\n", __FUNCTION__, txbuf);
+  for (size_t i = 0; i < len; i++) {
+    ebbrt::kprintf("%02X ", txbuf[i]);
+  }
+  ebbrt::kprintf("\n");
+    
   // bump tx_tail
   WriteTdt_1(Cpu::GetMine(), ixgmq_.tx_tail_); // indicates position beyond last descriptor hw
 }
@@ -1230,7 +1237,9 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   WriteRdlen_1(i, ixgmq[i]->rx_size_bytes_);
 
   // program srrctl register
-  WriteSrrctl_1(i, RXBUFSZ / 1024);  // bsizepacket = 2 KB
+  WriteSrrctl_1(i, RXBUFSZ / 1024);  // bsizepacket
+  //WriteSrrctl_1(i, (128 / 64) << 8);  // bsizeheader 
+  
   // TODO use adv?
   WriteSrrctl_1_desctype(i, ~(0x7 << 25));  // desctype legacy
   WriteSrrctl_1(i, 0x1 << 28);  // Drop_En
@@ -1296,7 +1305,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   //ebbrt::kprintf("RX enabled\n");
   
   // add buffer to each descriptor
-  for (auto j = 0; j < 256 - 1; j++) {
+  for (size_t j = 0; j < NRXDESCS - 1; j++) {
     auto rxphys =reinterpret_cast<uint64_t>((ixgmq[i]->circ_buffer_[j])->MutData());
     auto tail = ixgmq[i]->rx_tail_;
     
@@ -1339,204 +1348,19 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   ebbrt::kprintf("%s DONE\n\n", __FUNCTION__);
 }
 
-void ebbrt::IxgbeDriver::SetupQueue(uint32_t i) {  
-  // allocate memory for descriptor rings
-  ixgq = (e10k_queue_t*)malloc(sizeof(e10k_queue_t));
-
-  // TX
-  auto tx_size = sizeof(tdesc_legacy_t) * NTXDESCS;
-  ixgq->tx_ring = (tdesc_legacy_t*)malloc(tx_size);
-  //ixgq->tx_head = 0;
-  //TODO: not sure how much to allocate
-  ixgq->tx_head = (uint32_t*)malloc(4 * sizeof(uint32_t));
-  memset(ixgq->tx_head, 0, 4 * sizeof(uint32_t));
-  
-  ixgq->tx_tail = 0;
-  ixgq->tx_last_tail = 0;
-  ixgq->tx_isctx = (bool*)malloc(NTXDESCS * sizeof(bool));
-  ixgq->tx_size = NTXDESCS;
-  
-  // RX - allocate a ring of 256 receive legacy descriptors
-  auto rx_size = sizeof(rdesc_legacy_t) * NRXDESCS;
-  ixgq->rx_ring = (rdesc_legacy_t*)malloc(rx_size);
-
-  // head and tail point to same descriptor
-  ixgq->rx_head = 0;
-  ixgq->rx_tail = 0;
-  ixgq->rx_size = NRXDESCS;
-  ixgq->circ_buffer.reserve(NRXDESCS);
-  
-  for(uint32_t k=0; k < NRXDESCS; k ++)
-  {
-    ixgq->circ_buffer.emplace_back(MakeUniqueIOBuf(RXBUFSZ, true));
-  }
-
-  // zero out rings
-  memset(ixgq->tx_ring, 0, tx_size);
-  memset(ixgq->rx_ring, 0, rx_size);
-
-  ebbrt::kprintf("rx_ring addr: %p\ntx_ring: %p\n", ixgq->rx_ring,
-                 ixgq->tx_ring);
-
-  // Initialize RX queue in HW
-  uint64_t rxaddr = reinterpret_cast<uint64_t>(ixgq->rx_ring);
-  uint32_t rxaddrl = rxaddr & 0xFFFFFFFF;
-  uint32_t rxaddrh = (rxaddr >> 32) & 0xFFFFFFFF;
-  ebbrt::kprintf("rxaddr: %p rxaddrl: 0x%X rxaddrh: 0x%X\n", rxaddr, rxaddrl,
-                 rxaddrh);
-
-  // rxaddrl must be 128 byte aligned, lower 7 bits == 0
-  
-  //kassert((rxaddrl & 0x7F) == 0);
-
-  // update register RDBAL, RDBAH with receive descriptor base address
-  WriteRdbal_1(i, rxaddrl);
-  WriteRdbah_1(i, rxaddrh);
-
-  // length must also be 128 byte aligned
-  //kassert((rx_size & 0x7F) == 0);
-  // set to number of bytes allocated for receive descriptor ring
-  WriteRdlen_1(i, rx_size);
-
-  // program srrctl register
-  WriteSrrctl_1(i, RXBUFSZ / 1024);  // bsizepacket = 2 KB
-  WriteSrrctl_1_desctype(i, ~(0x7 << 25));  // desctype legacy
-  WriteSrrctl_1(i, 0x1 << 28);  // Drop_En
-
-  // TODO: enable rssctl
-
-  // Set Enable bit in receive queue
-  WriteRxdctl_1_enable(i, 0x1 << 25);
-  while (ReadRxdctl_1_enable(i) == 0)  // till set
-    ;  // TODO: Timeout
-
-  // Set head and tail pointers
-  WriteRdt_1(i, 0x0);
-  WriteRdh_1(i, 0x0);
-
-  ebbrt::kprintf("RX queue enabled\n");
-
-  // setup RX interrupts for queue 0
-  //auto rcv_vector =
-  //  event_manager->AllocateVector([this]() { ebb_->ReceivePoll(); });
-  //dev_.SetMsixEntry(i * 2, rcv_vector, i);  // TODO: fix
-
-  //auto ii = i / 2;
-  // if((i % 2) == 0) {
-  WriteIvarAlloc0(i, 0);
-  WriteIvarAllocval0(i, 0x1 << 7);
-  WriteIvarAlloc1(i, 0 << 8);
-  WriteIvarAllocval1(i, 0x1 << 15);
-  //}
-
-  // enable autoclear for queue 0
-  WriteEiac(0x1 << i);
-
-  // enable interrupt
-  WriteEimsn(i, 0x1 << i);
-  WriteEicr(0x1 << i);
-
-  // Enable RX
-  WriteSecrxctrl_Rx_Dis(0x1 << 1);  // disable RX_DIS
-  while (ReadSecrxstat_Sr_Rdy() == 0)
-    ;  // TODO Timeout
-  WriteRxctrl(0x1);
-  WriteSecrxctrl_Rx_Dis(0x0 << 1);  // enable RX_DIS
-
-  ebbrt::kprintf("RX enabled\n");
-
-  // Add RX Buffers to ring
-  //rxbuf = malloc(RXBUFSZ * (NRXDESCS - 1));
-  //kassert(rxbuf != NULL);
-  //memset(rxbuf, 0, RXBUFSZ * (NRXDESCS - 1));
-
-  //ebbrt::kprintf("Allocated RX buffer: %p\n", rxbuf);
-
-  // add buffer to each descriptor
-  for (auto j = 0; j < 256 - 1; j++) {
-    
-    /*auto rxphys =
-        reinterpret_cast<uint64_t>(static_cast<char*>(rxbuf) + (i * RXBUFSZ));
-    
-    auto tail = ixgq->rx_tail;
-    // update buffer address for descriptor
-    ixgq->rx_ring[tail].buffer_address = rxphys;  */
-    
-    auto rxphys =reinterpret_cast<uint64_t>((ixgq->circ_buffer[j])->MutData());
-    auto tail = ixgq->rx_tail;
-    // update buffer address for descriptor
-    ixgq->rx_ring[tail].buffer_address = rxphys;
-
-    ebbrt::kprintf("Descriptor #%d: %p %p %p\n", tail, rxphys,
-		   ixgq->rx_ring[tail].buffer_address, (ixgq->circ_buffer[j])->Data());
-
-    ixgq->rx_tail = (tail + 1) % ixgq->rx_size;
-
-    // TODO: check if queue is full
-  }
-
-  // bump tail pts via register rdt to enable descriptor fetching by setting to
-  // length of ring minus one
-  WriteRdt_1(i, ixgq->rx_tail);
-
-  ebbrt::kprintf("RX Queue setup complete - head=%d tail=%d\n\n", ixgq->rx_head,
-                 ixgq->rx_tail);
-
-  // Initialize TX queue in HW
-  uint64_t txaddr = reinterpret_cast<uint64_t>(ixgq->tx_ring);
-  uint32_t txaddrl = txaddr & 0xFFFFFFFF;
-  uint32_t txaddrh = (txaddr >> 32) & 0xFFFFFFFF;
-  ebbrt::kprintf("txaddr: %p txaddrl: %p txaddrh: %p\n", txaddr, txaddrl,
-                 txaddrh);
-  // txaddrl must be 128 byte aligned, lower 7 bits == 0
-  //kassert((txaddrl & 0x7F) == 0);
-
-  // program base address registers
-  WriteTdbal(i, txaddrl);
-  WriteTdbah(i, txaddrh);
-
-  // length must also be 128 byte aligned
-  //kassert((tx_size & 0x7F) == 0);
-  WriteTdlen(i, tx_size);
-
-  // set up head wb
-  uint64_t txhwbaddr = reinterpret_cast<uint64_t>(ixgq->tx_head);
-  //kassert((txhwbaddr & 0x3) == 0); //lower 2 bits = 0
-  uint32_t txhwbaddrl = txhwbaddr & 0xFFFFFFFF;
-  uint32_t txhwbaddrh = (txhwbaddr >> 32) & 0xFFFFFFFF;
-  WriteTdwbal(i, txhwbaddrl | 0x1); //HGead_WB_En = 1
-  WriteTdwbah(i, txhwbaddrh);
-  
-  // init head and tail ptr
-  WriteTdh(i, 0x0);
-  WriteTdt(i, 0x0);
-  
-  // enable transmit path
-  WriteDmatxctl_te(0x1);
-  
-  // transmit queue enable
-  WriteTxdctl(i, 0x1 << 25);
-  // poll until set, TODO: Timeout
-  while (ReadTxdctl_enable(i) == 0);
-  ebbrt::kprintf("TX queue enabled\n");
-  
-  // TODO: set up dca txctrl FreeBSD?
-  WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
-}
-
 // IxgbeDriverRep
 uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr) {
   rdesc_legacy_t tmp;
   tmp = ixgmq_.rx_ring_[ixgmq_.rx_head_];
 
-  std::atomic_thread_fence(std::memory_order_release);
+  //std::atomic_thread_fence(std::memory_order_release);
 
   // if got new packet
   if (tmp.dd && tmp.eop) {
 
     // set len and address
     *len = tmp.length;
-    *bAddr = tmp.buffer_address;
+    //*bAddr = tmp.buffer_address;
 
     // reset descriptor
     ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0] = 0;
@@ -1555,16 +1379,23 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   uint64_t bAddr;
   auto count = 0;
 
+  // poll mode
+  //uint32_t mycpu = static_cast<uint32_t>(Cpu::GetMine());
+  //ebbrt::kprintf("Switching to poll mode for cpu %d\n", mycpu);
+  //disable interrupt
+  //WriteEimcn(mycpu, 0x1);
+  
+//process:
   // get address of buffer with data
   while (GetRxBuf(&len, &bAddr) == 0) {
 
     // done with buffer addr above, now to reuse it
     auto tail = ixgmq_.rx_tail_;
-    ixgmq_.rx_ring_[tail].buffer_address = bAddr;
+    //ixgmq_.rx_ring_[tail].buffer_address = bAddr;
 
     // bump tail ptr
     ixgmq_.rx_tail_ = (tail + 1) % ixgmq_.rx_size_;
-
+    
     count++;
     
     if (count > 0) {
@@ -1575,6 +1406,14 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
 
       //TODO hack - need to reallocate IOBuf after its been moved to Receive
       auto b = std::move(ixgmq_.circ_buffer_[tail]);
+
+      /*ebbrt::kprintf("%s rx_tail_ -> %d\n", __FUNCTION__, ixgmq_.rx_tail_);
+      //auto p1 = b.Get(len * sizeof(uint8_t));
+      auto p1 = reinterpret_cast<uint8_t*>(b->MutData());
+      for (size_t i = 0; i < len; i++) {
+	ebbrt::kprintf("%02X ", p1[i]);
+      }
+      ebbrt::kprintf("\n\n");*/
       
       ixgmq_.circ_buffer_[tail] = std::move(MakeUniqueIOBuf(IxgbeDriver::RXBUFSZ));
       auto rxphys = reinterpret_cast<uint64_t>((ixgmq_.circ_buffer_[tail])->MutData());
@@ -1592,6 +1431,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
     // update reg
     WriteRdt_1(Cpu::GetMine(), ixgmq_.rx_tail_);
   }
+  //goto process;
 }
 
 ebbrt::IxgbeDriverRep::IxgbeDriverRep(const IxgbeDriver& root)
@@ -1616,4 +1456,11 @@ void ebbrt::IxgbeDriverRep::Run() {
 }
 void ebbrt::IxgbeDriverRep::WriteTdt_1(uint32_t n, uint32_t m) {
   root_.bar0_.Write32(0x06018 + 0x40 * n, m);
+}
+
+// 8.2.3.5.9 Extended Interrupt Mask Clear Registers — EIMC[n]
+// (0x00AB0 + 4*(n-1), n=1...2; WO)
+void ebbrt::IxgbeDriverRep::WriteEimcn(uint32_t n, uint32_t m) {
+  auto reg = root_.bar0_.Read32(0x00AB0 + 4 * n);
+  root_.bar0_.Write32(0x00AB0 + 4 * n, reg | m);
 }

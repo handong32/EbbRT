@@ -15,7 +15,7 @@ ebbrt::NetworkManager::NewInterface(EthernetDevice& ether_dev) {
 void ebbrt::NetworkManager::Interface::Receive(std::unique_ptr<MutIOBuf> buf) {
   auto packet_len = buf->ComputeChainDataLength();
 
-  ebbrt::kprintf("%s packet_len->%lld \n", __PRETTY_FUNCTION__, packet_len);
+  //ebbrt::kprintf("%s packet_len->%lld \n", __PRETTY_FUNCTION__, packet_len);
   
   // Drop packets that are too small
   if (packet_len <= sizeof(EthernetHeader))
@@ -62,18 +62,19 @@ void ebbrt::NetworkManager::Interface::Receive(std::unique_ptr<MutIOBuf> buf) {
     //   ebbrt::kprintf("0x%02X ", tbuf2[i]);
     // }
     // ebbrt::kprintf("\n");
-
+    
+    //ebbrt::kprintf("eth type ip\n");
     ReceiveIp(eth_header, std::move(buf));
     break;
   }
   case kEthTypeArp: {
-    ebbrt::kprintf("eth type arp\n");
+    //ebbrt::kprintf("eth type arp\n");
     ReceiveArp(eth_header, std::move(buf));
     break;
   }
   }
 
-  ebbrt::kprintf("receive done\n\n\n");
+  //ebbrt::kprintf("receive done\n\n\n");
 }
 
 const ebbrt::EthernetAddress& ebbrt::NetworkManager::Interface::MacAddress() {

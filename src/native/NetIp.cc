@@ -32,7 +32,7 @@ void ebbrt::NetworkManager::Interface::ReceiveIp(
     EthernetHeader& eth_header, std::unique_ptr<MutIOBuf> buf) {
   auto packet_len = buf->ComputeChainDataLength();
 
-  ebbrt::kprintf("%s len->%d\n", __FUNCTION__, packet_len);
+  //ebbrt::kprintf("%s len->%d\n", __FUNCTION__, packet_len);
   
   if (unlikely(packet_len < sizeof(Ipv4Header)))
     return;
@@ -109,17 +109,17 @@ void ebbrt::NetworkManager::Interface::ReceiveIp(
 
   switch (ip_header.proto) {
   case kIpProtoICMP: {
-    ebbrt::kprintf("%s icmp\n", __FUNCTION__);
+    //ebbrt::kprintf("%s icmp\n", __FUNCTION__);
     ReceiveIcmp(eth_header, ip_header, std::move(buf));
     break;
   }
   case kIpProtoUDP: {
-    ebbrt::kprintf("%s udp\n", __FUNCTION__);
+    //ebbrt::kprintf("%s udp\n", __FUNCTION__);
     ReceiveUdp(ip_header, std::move(buf));
     break;
   }
   case kIpProtoTCP: {
-    ebbrt::kprintf("%s tcp\n", __FUNCTION__);
+    //ebbrt::kprintf("%s tcp\n", __FUNCTION__);
     ReceiveTcp(ip_header, std::move(buf));
     break;
   }

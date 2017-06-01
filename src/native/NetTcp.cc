@@ -3,7 +3,7 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
 #include "Net.h"
-
+ 
 #include "../IOBufRef.h"
 #include "../Timer.h"
 #include "../UniqueIOBuf.h"
@@ -89,7 +89,8 @@ uint16_t ebbrt::NetworkManager::TcpPcb::Connect(Ipv4Address address,
   uint32_t iss = random::Get();
   entry_->snd_una = iss;
   entry_->snd_nxt = iss;  // EnqueueSegment will increment this by one
-  entry_->snd_wnd = TcpWindow16(kTcpWnd);
+  // We should wait to hear back from our Syn before setting this
+  entry_->snd_wnd = kTcpWnd;
   entry_->rcv_nxt = 0;
   entry_->rcv_wnd = kTcpWnd;
 
@@ -115,7 +116,7 @@ uint16_t ebbrt::NetworkManager::TcpPcb::Connect(Ipv4Address address,
   // TODO(dschatz): There should be a timeout to close the new connection if
   // the handshake doesn't complete
 
-  auto optlen = 4;  // for MSS
+  auto optlen = 8;  // for MSS + NOP + WS
   auto new_buf = MakeUniqueIOBuf(optlen + sizeof(TcpHeader) +
                                  sizeof(Ipv4Header) + sizeof(EthernetHeader));
   new_buf->Advance(sizeof(Ipv4Header) + sizeof(EthernetHeader));
@@ -123,6 +124,11 @@ uint16_t ebbrt::NetworkManager::TcpPcb::Connect(Ipv4Address address,
   auto& tcp_header = dp.Get<TcpHeader>();
   auto opts = reinterpret_cast<uint32_t*>((&tcp_header) + 1);
   *opts = htonl(0x02040000 | (1460 & 0xFFFF));
+  auto nop_ptr = reinterpret_cast<uint8_t*>(opts+1);
+  nop_ptr[0] = 0x1; // NOP
+  nop_ptr[1] = 0x3; // WS type
+  nop_ptr[2] = 0x3; // opt length
+  nop_ptr[3] = kWindowShift; // shift value
   entry_->EnqueueSegment(tcp_header, std::move(new_buf), kTcpSyn, optlen);
 
   auto now = ebbrt::clock::Wall::Now();
@@ -408,11 +414,12 @@ void ebbrt::NetworkManager::ListeningTcpEntry::Input(
     entry->rcv_nxt = info.seqno + 1;
 
     entry->snd_una = start_seq;
-    entry->snd_wnd = ntohs(th.wnd);
+    // TODO(dschatz): Read the window shift from the options!!!
+    entry->snd_wnd = ntohs(th.wnd) << kWindowShift;
     entry->rcv_wnd = kTcpWnd;
 
     // Create a SYN-ACK reply
-    auto optlen = 4;  // for MSS
+    auto optlen = 8;  // for MSS + NOP + WS
     auto new_buf = MakeUniqueIOBuf(optlen + sizeof(TcpHeader) +
                                    sizeof(Ipv4Header) + sizeof(EthernetHeader));
     new_buf->Advance(sizeof(Ipv4Header) + sizeof(EthernetHeader));
@@ -420,6 +427,11 @@ void ebbrt::NetworkManager::ListeningTcpEntry::Input(
     auto& tcp_header = dp.Get<TcpHeader>();
     auto opts = reinterpret_cast<uint32_t*>((&tcp_header) + 1);
     *opts = htonl(0x02040000 | (1460 & 0xFFFF));
+    auto nop_ptr = reinterpret_cast<uint8_t*>(opts+1);
+    nop_ptr[0] = 0x1; // NOP
+    nop_ptr[1] = 0x3; // WS type
+    nop_ptr[2] = 0x3; // opt length
+    nop_ptr[3] = kWindowShift; // shift value
     entry->EnqueueSegment(tcp_header, std::move(new_buf), kTcpSyn | kTcpAck,
                           optlen);
 
@@ -563,7 +575,7 @@ bool ebbrt::NetworkManager::TcpEntry::Receive(
         // Received a SYN-ACK
         snd_una = info.ackno;
         state = kEstablished;
-        snd_wnd = ntohs(th.wnd);
+        snd_wnd = ntohs(th.wnd) << kWindowShift;
         snd_wl1 = info.seqno;
         snd_wl2 = info.ackno;
 
@@ -602,7 +614,7 @@ bool ebbrt::NetworkManager::TcpEntry::Receive(
         }
 
         state = kEstablished;
-        snd_wnd = ntohs(th.wnd);
+        snd_wnd = ntohs(th.wnd) << kWindowShift;
         snd_wl1 = info.seqno;
         snd_wl2 = info.ackno;
         // Fall through
@@ -624,7 +636,7 @@ bool ebbrt::NetworkManager::TcpEntry::Receive(
             // SEG.SEQ, and set SND.WL2 <- SEG.ACK."
             // ... "The check here prevents using old segments to update the
             // window"
-            snd_wnd = ntohs(th.wnd);
+            snd_wnd = ntohs(th.wnd) << kWindowShift;
             snd_wl1 = info.seqno;
             snd_wl2 = info.ackno;
           }
@@ -678,16 +690,19 @@ bool ebbrt::NetworkManager::TcpEntry::Receive(
     }
 
     // First check sequence number
-    if (likely((rcv_wnd > 0 && TcpSeqBetween(rcv_nxt, info.seqno,
-                                             info.seqno + info.tcplen))) ||
+    if (likely((rcv_wnd > 0 &&
+                TcpSeqBetween(info.seqno, rcv_nxt, rcv_nxt + rcv_wnd))) ||
         (info.tcplen == 0 && info.seqno == rcv_nxt)) {
-      // 1) Our receive window is open and this segment has in sequence data OR
+      // 1) Segment is within the sequence of the receive window
+      //    RCV.NXT =< SEG.SEQ < RCV.NXT+RCV.WND
       // 2) this sequence has zero length but is in sequence (even if our
       // receive window is closed)
-
-      // Trim the front
-      buf->Advance(rcv_nxt - info.seqno);
-      info.tcplen -= rcv_nxt - info.seqno;
+      
+      if (TcpSeqGT(rcv_nxt, info.seqno)) {
+        // Trim the front
+        buf->Advance(rcv_nxt - info.seqno);
+        info.tcplen -= rcv_nxt - info.seqno;
+      }
 
       // Second check the RST bit
       if (unlikely(flags & kTcpRst)) {
@@ -757,7 +772,35 @@ bool ebbrt::NetworkManager::TcpEntry::Receive(
       auto payload_len = buf_len - hdr_len;
       if (payload_len > 0) {
         if (likely(state == kEstablished)) {
-          if (unlikely(info.tcplen > rcv_wnd)) {
+	  
+	  // Stash segments that are not in-sequence
+          // TODO: save and restore flags of stashed segments
+          if (TcpSeqGT(info.seqno, rcv_nxt)) {
+            // RFC 793 Page 69:
+            // "Segments with higher begining sequence numbers may be held for
+            // later processing."
+            buf->Advance(hdr_len);
+            if (stashed_segments.count(info.seqno) == 0) {
+              stashed_segments.emplace(info.seqno, std::move(buf));
+            }
+            SendEmptyAck();
+            return true;
+          }
+          // Append stashed in-sequence segments
+          if (!stashed_segments.empty()) {
+            auto it = stashed_segments.begin();
+            while (it != stashed_segments.end()) {
+              if (it->first == rcv_nxt + payload_len) {
+                payload_len += (it->second)->ComputeChainDataLength();
+                buf->PrependChain(std::move(it->second));
+		it = stashed_segments.erase(it);
+              } else {
+                ++it;
+              }
+            }
+          }
+          // From here all received data should be in-sequence
+          if (unlikely(payload_len > rcv_wnd)) {
             if (flags & kTcpFin) {
               // remove FIN flag since it doesn't fit in the window
               auto flags = th.Flags() & ~kTcpFin;
@@ -765,16 +808,17 @@ bool ebbrt::NetworkManager::TcpEntry::Receive(
               info.tcplen--;
             }
             // Received more data than our receive window can hold, trim the end
-            buf->TrimEnd(info.tcplen - rcv_wnd);
-            info.tcplen = rcv_wnd;
+            buf->TrimEnd(payload_len - rcv_wnd);
+            payload_len = rcv_wnd;
           }
 
-          rcv_nxt += info.tcplen;
+          rcv_nxt += payload_len;
           if (unlikely(close_window)) {
-            rcv_wnd -= info.tcplen;
+            rcv_wnd -= payload_len;
           }
 
           buf->Advance(hdr_len);
+	  
           handler->Receive(std::move(buf));
         } else if (state == kFinWait1 || state == kFinWait2) {
           // The application has already called Close(), but we have not

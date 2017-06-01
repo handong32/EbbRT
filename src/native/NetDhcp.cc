@@ -61,8 +61,6 @@ void ebbrt::NetworkManager::Interface::ReceiveDhcp(
       if (dhcp_pcb_.state != DhcpPcb::State::kSelecting)
         return;
       
-      ebbrt::kprintf("%s\n", __FUNCTION__);
-      
       DhcpHandleOffer(dhcp_message);
       break;
     case kDhcpOptionMessageTypeAck:
@@ -96,7 +94,7 @@ void ebbrt::NetworkManager::Interface::DhcpDiscover() {
 
   dhcp_pcb_.udp_pcb.SendTo(Ipv4Address::Broadcast(), kDhcpServerPort,
                            std::move(buf));
-
+    
   dhcp_pcb_.tries++;
   auto timeout =
       std::chrono::seconds(dhcp_pcb_.tries < 6 ? 1 << dhcp_pcb_.tries : 60);
@@ -197,8 +195,6 @@ void ebbrt::NetworkManager::Interface::DhcpHandleAck(
   DhcpSetState(DhcpPcb::State::kBound);
 
   dhcp_pcb_.complete.SetValue();
-
-  kprintf("%s Done\n", __PRETTY_FUNCTION__);
 }
 
 void ebbrt::NetworkManager::Interface::DhcpPcb::Fire() {
