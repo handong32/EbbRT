@@ -71,7 +71,7 @@ void ebbrt::IxgbeDriverRep::AddContext(uint8_t idx, uint8_t maclen, uint16_t ipl
   //ebbrt::kprintf("%s raw_1->0x%llX raw_2->0x%llx head->%d tail->%d \n", __FUNCTION__, actx->raw_1, actx->raw_2, ixgq_.tx_head, ixgq_.tx_tail);
 }
 
-void ebbrt::IxgbeDriverRep::AddTx(const unsigned char *pa, uint64_t len, bool first, bool last, uint8_t ctx, bool ip_cksum, bool tcpudp_cksum) {
+void ebbrt::IxgbeDriverRep::AddTx(const uint8_t *pa, uint64_t len, uint64_t totallen, bool first, bool last, uint8_t ctx, bool ip_cksum, bool tcpudp_cksum) {
 
   tdesc_advance_tx_rf_t* actx;
 
@@ -84,17 +84,31 @@ void ebbrt::IxgbeDriverRep::AddTx(const unsigned char *pa, uint64_t len, bool fi
   actx->raw[1] = 0x0;
   
   actx->address = reinterpret_cast<uint64_t>(pa);
-  ebbrt::kprintf("actx->address = %p\n", actx->address);
   actx->dtalen = len;
   if(first) {
-    actx->paylen = len;
+    actx->paylen = totallen;
   }
-
+  ebbrt::kprintf("%s %p %d %d\n", __FUNCTION__, actx->address, actx->dtalen, actx->paylen);
+  
   actx->dtyp = 0b0011;
   actx->dext = 1;
-  actx->rs = 1;
+
+  // rs bit should only be set when eop is set
+  if(last) {
+    actx->rs = 1;
+  }
+  else {
+    actx->rs = 0;
+  }
+  
   actx->ifcs = 1;
-  actx->eop = last;
+  
+  if(last) {
+    actx->eop = 1;
+  }
+  else {
+    actx->eop = 0;
+  }
   
   if(ctx != -1) {
     actx->idx = ctx;
@@ -112,15 +126,16 @@ void ebbrt::IxgbeDriverRep::AddTx(const unsigned char *pa, uint64_t len, bool fi
 void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   auto dp = buf->GetDataPointer();
   auto len = buf->ComputeChainDataLength();
+  auto count = buf->CountChainElements();
+  auto free_desc = IxgbeDriver::NTXDESCS - (ixgmq_.tx_tail_ - *(reinterpret_cast<uint64_t*>(ixgmq_.txhwbaddr_)));
+  ebbrt::kprintf("%s len=%d count=%d free_desc=%d\n", __FUNCTION__, len, count, free_desc);
   
   ebbrt::kbugon(len >= 0xA0 * 1000, "%s packet len bigger than max ether length\n", __FUNCTION__);
+
+  ebbrt::kbugon(free_desc < count, "%s not enough free descriptors\n", __FUNCTION__);
   
   // get a single buffer of data
-  auto txbuf = dp.Get(len * sizeof(uint8_t));
-  
-  //for(size_t i = 0; i < len; i ++) {
-  //  ixgmq_.txbuffer[i] = txbuf[i];
-  //}
+  //auto txbuf = dp.Get(len * sizeof(uint8_t));
   
   if(pinfo.flags & PacketInfo::kNeedsCsum) {
     if(pinfo.csum_offset == 6) {
@@ -133,19 +148,63 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
       ebbrt::kabort("%s unknown packet type checksum\n", __FUNCTION__);
     }
 
-    AddTx(txbuf, len, true, true, 0, false, true);
-    //AddTx(ixgmq_.txbuffer, len, true, true, 0, false, true);    
+    // if buffer is chained
+    if(buf->IsChained()) {
+      size_t counter = 0;
+      for(auto& buf_it : *buf) {	
+        counter ++;
+	
+	//first buffer
+	if(counter == 1) {
+	  AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, true, false, 0, false, true);
+	}
+	else
+	{
+	  //last buffer
+	  if(counter == count) {
+	    AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, false, true, 0, false, true);
+	  }
+	  else {
+	    AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, false, false, 0, false, true);
+	  }
+	}
+      }
+    }
+    // not chained
+    else {
+      AddTx(buf->Data(), len, len, true, true, 0, false, true);
+    }
   } 
   else {
-    AddTx(txbuf, len, true, true, -1, false, false);
-    //AddTx(ixgmq_.txbuffer, len, true, true, -1, false, false);
+    // if buffer is chained
+    if(buf->IsChained()) {
+      size_t counter = 0;
+      for(auto& buf_it : *buf) {	
+        counter ++;
+	
+	//first buffer
+	if(counter == 1) {
+	  AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, true, false, 0, false, false);
+	}
+	else
+	{
+	  //last buffer
+	  if(counter == count) {
+	    AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, false, true, 0, false, false);
+	  }
+	  else {
+	    AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, false, false, 0, false, false);
+	  }
+	}
+      }
+    }
+    // not chained
+    else {
+      AddTx(buf->Data(), len, len, true, true, 0, false, true);
+    }
+    //ebbrt::kabort("Always need checksum\n");
+    //AddTx(len, true, true, -1, false, false);
   }
-  
-  ebbrt::kprintf("%s txbuf = %p\n", __FUNCTION__, txbuf);
-  for (size_t i = 0; i < len; i++) {
-    ebbrt::kprintf("%02X ", txbuf[i]);
-  }
-  ebbrt::kprintf("\n");
     
   // bump tx_tail
   WriteTdt_1(Cpu::GetMine(), ixgmq_.tx_tail_); // indicates position beyond last descriptor hw
@@ -1419,7 +1478,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
       auto rxphys = reinterpret_cast<uint64_t>((ixgmq_.circ_buffer_[tail])->MutData());
       
       ixgmq_.rx_ring_[tail].buffer_address = rxphys;
-      
+      //ebbrt::kprintf("%s %p %p\n", bAddr, rxphys);
       root_.itf_.Receive(std::move(b));
     }
   }

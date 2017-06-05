@@ -163,7 +163,8 @@ class IxgbeDriver : public EthernetDevice {
 
       // head wb addr
       tx_head_ = (uint32_t*) malloc (4 * sizeof(uint32_t));
-
+      memset(tx_head_, 0, 4 * sizeof(uint32_t));
+      
       rxaddr_ = reinterpret_cast<uint64_t>(rx_ring_);
       txaddr_ = reinterpret_cast<uint64_t>(tx_ring_);
       txhwbaddr_ = reinterpret_cast<uint64_t>(tx_head_);
@@ -401,7 +402,7 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo);
   void AddContext(uint8_t idx, uint8_t maclen, 
 		  uint16_t iplen, uint8_t l4len, enum l4_type l4type);
-  void AddTx(const unsigned char *pa, uint64_t len, 
+  void AddTx(const uint8_t *pa, uint64_t len, uint64_t totallen, 
 	     bool first, bool last, 
 	     uint8_t ctx, bool ip_cksum, bool tcpudp_cksum);
 
