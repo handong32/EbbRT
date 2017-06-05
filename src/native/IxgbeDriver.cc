@@ -88,7 +88,7 @@ void ebbrt::IxgbeDriverRep::AddTx(const uint8_t *pa, uint64_t len, uint64_t tota
   if(first) {
     actx->paylen = totallen;
   }
-  ebbrt::kprintf("%s %p %d %d\n", __FUNCTION__, actx->address, actx->dtalen, actx->paylen);
+  //ebbrt::kprintf("%s %p %d %d\n", __FUNCTION__, actx->address, actx->dtalen, actx->paylen);
   
   actx->dtyp = 0b0011;
   actx->dext = 1;
@@ -128,7 +128,7 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   auto len = buf->ComputeChainDataLength();
   auto count = buf->CountChainElements();
   auto free_desc = IxgbeDriver::NTXDESCS - (ixgmq_.tx_tail_ - *(reinterpret_cast<uint64_t*>(ixgmq_.txhwbaddr_)));
-  ebbrt::kprintf("%s len=%d count=%d free_desc=%d\n", __FUNCTION__, len, count, free_desc);
+  //ebbrt::kprintf("%s len=%d count=%d free_desc=%d\n", __FUNCTION__, len, count, free_desc);
   
   ebbrt::kbugon(len >= 0xA0 * 1000, "%s packet len bigger than max ether length\n", __FUNCTION__);
 
@@ -200,7 +200,7 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     }
     // not chained
     else {
-      AddTx(buf->Data(), len, len, true, true, 0, false, true);
+      AddTx(buf->Data(), len, len, true, true, 0, false, false);
     }
     //ebbrt::kabort("Always need checksum\n");
     //AddTx(len, true, true, -1, false, false);
