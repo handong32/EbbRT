@@ -6,6 +6,15 @@
 
 void ebbrt::NetworkManager::Init() {}
 
+void ebbrt::NetworkManager::ApInit()
+{
+  network_manager->CpuInit();
+}
+
+void ebbrt::NetworkManager::CpuInit() {
+  interface_->CpuInit();
+}
+
 ebbrt::NetworkManager::Interface&
 ebbrt::NetworkManager::NewInterface(EthernetDevice& ether_dev) {
   interface_.reset(new Interface(ether_dev));

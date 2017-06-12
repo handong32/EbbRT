@@ -12,6 +12,7 @@
 #include "Io.h"
 #include "VMem.h"
 #include "VMemAllocator.h"
+#include "GeneralPurposeAllocator.h"
 
 namespace {
 const constexpr uint32_t kPciAddressPort = 0xCF8;
@@ -259,13 +260,17 @@ bool ebbrt::pci::Bar::Is64() const { return is_64_; }
 void ebbrt::pci::Bar::Map() {
   if (!mmio_)
     return;
-
+  
   auto npages = align::Up(size_, pmem::kPageSize) >> pmem::kPageShift;
-  auto page = vmem_allocator->Alloc(npages);
+  auto pf = std::make_unique<MulticorePciFaultHandler>();
+  auto& ref = *pf;
+  
+  auto page = vmem_allocator->Alloc(npages, std::move(pf));
   vaddr_ = reinterpret_cast<void*>(page.ToAddr());
   kbugon(page == Pfn::None(), "Failed to allocate virtual pages for mmio\n");
   //ebbrt::kprintf("%s - vaddr:%p addr:%p size:%d, Pfn::Down(addr_):%p\n", __PRETTY_FUNCTION__, vaddr_, addr_, size_, Pfn::Down(addr_));
   vmem::MapMemory(page, Pfn::Down(addr_), size_);
+  ref.SetMap(page, Pfn::Down(addr_), size_);
 }
 
 uint8_t ebbrt::pci::Bar::Read8(size_t offset) {

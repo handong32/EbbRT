@@ -13,6 +13,7 @@
 #include "PageAllocator.h"
 #include "Tls.h"
 #include "VMem.h"
+#include "IxgbeDriver.h"
 
 extern char smpboot[];
 extern char smpboot_end[];
@@ -65,7 +66,12 @@ extern "C" __attribute__((noreturn)) void ebbrt::smp::SmpMain() {
 
   cpu->Init();
 
-  event_manager->SpawnLocal([]() { smp_barrier->Wait(); },
-                            /* force_async = */ true);
+  event_manager->SpawnLocal([]() {
+#ifdef __EBBRT_ENABLE_NETWORKING__
+      NetworkManager::ApInit();
+#endif
+      smp_barrier->Wait();
+    },
+    /* force_async = */ true);
   event_manager->StartProcessingEvents();
 }

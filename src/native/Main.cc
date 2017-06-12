@@ -145,33 +145,30 @@ ebbrt::Main(multiboot::Information* mbi) {
         apic::Init();
         apic::PVEoiInit(0);
         Timer::Init();
-        smp::Init();
-        event_manager->ReceiveToken();
+
 #ifdef __EBBRT_ENABLE_NETWORKING__
         NetworkManager::Init();
         pci::Init();
         //pci::RegisterProbe(VirtioNetDriver::Probe);
 	pci::RegisterProbe(IxgbeDriver::Probe);
         pci::LoadDrivers();
-	//ebbrt::kabort("ixgbe test\n");
-        network_manager->StartDhcp().Then([](Future<void> fut) {
+#endif
+        smp::Init();
+        event_manager->ReceiveToken();
+#ifdef __EBBRT_ENABLE_NETWORKING__
+	network_manager->StartDhcp().Then([](Future<void> fut) {
           fut.Get();
 // Dhcp completed
-	  ebbrt::kprintf("main 1\n");
 #ifdef __EBBRT_ENABLE_DISTRIBUTED_RUNTIME__
           Messenger::Init();
-	  ebbrt::kprintf("main 2\n");
-          runtime::Init();
-	  ebbrt::kprintf("main 3\n");
+          //runtime::Init();
 #endif
 #endif
-	  ebbrt::kprintf("main 4\n");
           // run global ctors
           for (unsigned i = 0; i < (end_ctors - start_ctors); ++i) {
             start_ctors[i]();
           }
-	  ebbrt::kprintf("main 5\n");
-          kprintf("System initialization complete\n");
+	  kprintf("System initialization complete\n");
           if (AppMain) {
             event_manager->SpawnLocal([=]() { AppMain(); });
           }

@@ -43,6 +43,7 @@ struct PacketInfo {
 
 class EthernetDevice {
  public:
+  virtual void CpuInit() {};
   virtual void Send(std::unique_ptr<IOBuf> buf,
                     PacketInfo pinfo = PacketInfo()) = 0;
   virtual const EthernetAddress& GetMacAddress() = 0;
@@ -231,6 +232,9 @@ class NetworkManager : public StaticSharedEbb<NetworkManager> {
     explicit Interface(EthernetDevice& ether_dev)
         : address_(nullptr), ether_dev_(ether_dev) {}
 
+    void CpuInit() {
+      ether_dev_.CpuInit();
+    }
     void Receive(std::unique_ptr<MutIOBuf> buf);
     void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo = PacketInfo());
     void SendUdp(UdpPcb& pcb, Ipv4Address addr, uint16_t port,
@@ -296,10 +300,12 @@ class NetworkManager : public StaticSharedEbb<NetworkManager> {
   };
 
   static void Init();
-
+  static void ApInit();
+  
   Interface& NewInterface(EthernetDevice& ether_dev);
 
  private:
+  void CpuInit();
   Future<void> StartDhcp();
   void SendIp(std::unique_ptr<MutIOBuf> buf, Ipv4Address src, Ipv4Address dst,
               uint8_t proto, PacketInfo = PacketInfo());
