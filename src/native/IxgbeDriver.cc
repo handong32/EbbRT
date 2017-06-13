@@ -19,7 +19,11 @@
 #include <cinttypes>
 #include <mutex>
 
-#define DCA_ENABLE 1
+//#define JUMBO_EN
+#ifdef JUMBO_EN
+#define JUMBO_SZ 9728 //largest size allowed
+#endif
+#define DCA_EN
 
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
@@ -603,6 +607,12 @@ void ebbrt::IxgbeDriver::WritePfvlvf(uint32_t n, uint32_t m) {
   // auto reg = bar0_.Read32(0x0F100 + 4*n);
   // bar0_.Write32(0x0F100 + 4*n, reg | m);
   bar0_.Write32(0x0F100 + 4 * n, m);
+}
+
+// 8.2.3.22.13 Max Frame Size — MAXFRS (0x04268; RW)
+void ebbrt::IxgbeDriver::WriteMaxfrs(uint32_t m) {
+  auto reg = bar0_.Read32(0x04268);
+  bar0_.Write32(0x04268, reg | m);
 }
 
 // Checks the MAC's EEPROM to see if it supports a given SFP+ module type, if
@@ -1317,6 +1327,13 @@ void ebbrt::IxgbeDriver::Init() {
   WriteHlreg0(0x1 << 1);  // CRCStrip
   WriteRdrxctl(0x1);  // CRCStrip
 
+  // jumbo frames
+#ifdef JUMBO_EN
+  WriteHlreg0(0x1 << 2);
+  WriteMaxfrs(JUMBO_SZ << 16);
+  ebbrt::kprintf("Jumbo frames enabled of size: 0x%X\n", JUMBO_SZ);
+#endif
+  
   // from freeBSD/arrakis - ixgbe_common.c - ixgbe_start_hw_gen2
   // clear the rate limiters
   for (auto i = 0; i < 128; i++) {
@@ -1341,9 +1358,10 @@ void ebbrt::IxgbeDriver::Init() {
     }
   }
 
-#ifdef DCA_ENABLE
+#ifdef DCA_EN
   //DCA_MODE = DCA 1.0
   WriteDcaCtrl(0x1 << 1);
+  ebbrt::kprintf("DCA enabled\n");
 #endif
 }
 
@@ -1441,7 +1459,7 @@ void ebbrt::IxgbeDriverRep::SetupMultiQueue(uint32_t i) {
   // length of ring minus one
   root_.WriteRdt_1(i, ixgmq_.rx_tail_);
 
-#ifdef DCA_ENABLE
+#ifdef DCA_EN
   {
     auto myapic = ebbrt::Cpu::GetByIndex(i)->apic_id();
     
@@ -1450,7 +1468,7 @@ void ebbrt::IxgbeDriverRep::SetupMultiQueue(uint32_t i) {
     root_.WriteDcaRxctrl(i, 0x1 << 7); //Payload DCA EN
     
     root_.WriteDcaRxctrl(i, myapic << 24); // CPUID = apic id
-    printf("DCA enabled on RX queue Core %d with APIC ID %d\n", i, myapic);
+    //printf("DCA enabled on RX queue Core %d with APIC ID %d\n", i, myapic);
   }
 #endif
   
@@ -1482,12 +1500,12 @@ void ebbrt::IxgbeDriverRep::SetupMultiQueue(uint32_t i) {
   // do not want device to reorder messages, could have race issues
   //root_.WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
 
-#ifdef DCA_ENABLE
+#ifdef DCA_EN
   {
     auto myapic = ebbrt::Cpu::GetByIndex(i)->apic_id();
     root_.WriteDcaTxctrl(i, 0x1 << 5); //DCA Enable
     root_.WriteDcaTxctrl(i, myapic << 24); // CPUID = apic id
-    printf("DCA enabled on TX queue Core %d with APIC ID %d\n", i, myapic);
+    //printf("DCA enabled on TX queue Core %d with APIC ID %d\n", i, myapic);
   }
 #endif
   

@@ -300,6 +300,8 @@ class IxgbeDriver : public EthernetDevice {
   void WriteEimsn(uint32_t n, uint32_t m) const;
 
   void WriteDcaCtrl(uint32_t m);
+
+  void WriteMaxfrs(uint32_t m);
   
   uint8_t ReadRdrxctlDmaidone();
 
