@@ -19,7 +19,7 @@
 #include <cinttypes>
 #include <mutex>
 
-#define DCA_ENABLE
+#define DCA_ENABLE 1
 
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
@@ -775,6 +775,10 @@ void ebbrt::IxgbeDriver::WriteDcaTxctrlTxdescWbro(uint32_t n, uint32_t m) const{
 // 8.2.3.11.1 Rx DCA Control Register — DCA_RXCTRL[n] (0x0100C + 0x40*n,
 // n=0...63 and 0x0D00C + 0x40*(n-64),
 // n=64...127 / 0x02200 + 4*n, [n=0...15]; RW)
+void ebbrt::IxgbeDriver::WriteDcaRxctrl(uint32_t n, uint32_t m) const {
+  auto reg = bar0_.Read32(0x0100C + 0x40 * n);
+  bar0_.Write32(0x0100C + 0x40 * n, reg | m);
+} 
 void ebbrt::IxgbeDriver::WriteDcaRxctrl_1(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x0100C + 0x40 * n);
   bar0_.Write32(0x0100C + 0x40 * n, reg & m);
@@ -1436,6 +1440,19 @@ void ebbrt::IxgbeDriverRep::SetupMultiQueue(uint32_t i) {
   // bump tail pts via register rdt to enable descriptor fetching by setting to
   // length of ring minus one
   root_.WriteRdt_1(i, ixgmq_.rx_tail_);
+
+#ifdef DCA_ENABLE
+  {
+    auto myapic = ebbrt::Cpu::GetByIndex(i)->apic_id();
+    
+    root_.WriteDcaRxctrl(i, 0x1 << 5); //Descriptor DCA EN
+    root_.WriteDcaRxctrl(i, 0x1 << 6); //Rx Header DCA EN
+    root_.WriteDcaRxctrl(i, 0x1 << 7); //Payload DCA EN
+    
+    root_.WriteDcaRxctrl(i, myapic << 24); // CPUID = apic id
+    printf("DCA enabled on RX queue Core %d with APIC ID %d\n", i, myapic);
+  }
+#endif
   
   //ebbrt::kprintf("RX Queue setup complete - head=%d tail=%d\n", ixgmq[i]->rx_head_,
   //ixgmq[i]->rx_tail_);
@@ -1466,12 +1483,12 @@ void ebbrt::IxgbeDriverRep::SetupMultiQueue(uint32_t i) {
   //root_.WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
 
 #ifdef DCA_ENABLE
-
-  auto myapic = ebbrt::Cpu::GetByIndex(i)->apic_id();
-  root_.WriteDcaTxctrl(i, 0x1 << 5); //DCA Enable
-  root_.WriteDcaTxctrl(i, myapic << 24); // CPUID = apic id
-  printf("DCA enabled on TX queue %d with APIC ID %d\n", i, myapic);
-  
+  {
+    auto myapic = ebbrt::Cpu::GetByIndex(i)->apic_id();
+    root_.WriteDcaTxctrl(i, 0x1 << 5); //DCA Enable
+    root_.WriteDcaTxctrl(i, myapic << 24); // CPUID = apic id
+    printf("DCA enabled on TX queue Core %d with APIC ID %d\n", i, myapic);
+  }
 #endif
   
   //ebbrt::kprintf("%s DONE\n\n", __FUNCTION__);
@@ -1508,15 +1525,6 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   uint64_t bAddr;
   auto count = 0;
 
-  // poll mode
-  /*uint32_t mycpu = static_cast<uint32_t>(Cpu::GetMine());
-  if(mycpu > 0) {
-    ebbrt::kprintf("%s Core:%d\n", __FUNCTION__, mycpu);
-    }*/
-  //disable interrupt
-  //WriteEimcn(mycpu, 0x1);
-  
-//process:
   // get address of buffer with data
   while (GetRxBuf(&len, &bAddr) == 0) {
 
@@ -1554,12 +1562,12 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
     // update reg
     WriteRdt_1(Cpu::GetMine(), ixgmq_.rx_tail_);
   }
-  //goto process;
 }
 
 ebbrt::IxgbeDriverRep::IxgbeDriverRep(const IxgbeDriver& root)
   : root_(root),
     ixgmq_(Cpu::GetMine(), Cpu::GetMyNode()),
+    //TODO const_cast potential undefined behavior
     lock_(const_cast<SpinLock&>(root.lock)),
     receive_callback_([this]() { this->ReceivePoll(); }) {
   //int c = static_cast<int>(Cpu::GetMine());
