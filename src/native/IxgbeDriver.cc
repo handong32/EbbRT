@@ -16,6 +16,10 @@
 #include "Net.h"
 
 #include <atomic>
+#include <cinttypes>
+#include <mutex>
+
+#define DCA_ENABLE
 
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
@@ -50,9 +54,12 @@ ebbrt::IxgbeDriver::IxgbeDriver(pci::Device& dev)
   
   auto rcv_vector =
     event_manager->AllocateVector([this]() { ebb_->ReceivePoll(); });
-  
+
+  ebbrt::kprintf("Interrupt Allocation: \n");
   for(size_t i = 0; i < Cpu::Count(); i++) {
-    dev_.SetMsixEntry(i, rcv_vector, Cpu::GetByIndex(i)->apic_id());
+    auto myapic = Cpu::GetByIndex(i)->apic_id();
+    dev_.SetMsixEntry(i, rcv_vector, myapic);
+    ebbrt::kprintf("Core: %d, Vector: %d, APIC: %d\n", i, rcv_vector, myapic);
   }
 }
 const ebbrt::EthernetAddress& ebbrt::IxgbeDriver::GetMacAddress() {
@@ -746,8 +753,19 @@ void ebbrt::IxgbeDriver::WriteRttbcnrc(uint32_t m) {
   bar0_.Write32(0x04984, m);
 }
 
+// 8.2.3.11.4 DCA Control Register — DCA_CTRL (0x11074; RW)
+void ebbrt::IxgbeDriver::WriteDcaCtrl(uint32_t m) {
+  auto reg = bar0_.Read32(0x11074);
+  bar0_.Write32(0x11074, reg | m);
+}
+
 // 8.2.3.11.2 Tx DCA Control Registers — DCA_TXCTRL[n] (0x0600C + 0x40*n,
 // n=0...127; RW)
+void ebbrt::IxgbeDriver::WriteDcaTxctrl(uint32_t n, uint32_t m) const{
+  auto reg = bar0_.Read32(0x0600C + 0x40 * n);
+  bar0_.Write32(0x0600C + 0x40 * n, reg | m);
+  //ebbrt::kprintf("%s 0x%X\n", __FUNCTION__, reg);
+}
 void ebbrt::IxgbeDriver::WriteDcaTxctrlTxdescWbro(uint32_t n, uint32_t m) const{
   auto reg = bar0_.Read32(0x0600C + 0x40 * n);
   // ebbrt::kprintf("%s: 0x%08X -> 0x%08X\n", __FUNCTION__, reg, reg & m);
@@ -1318,19 +1336,17 @@ void ebbrt::IxgbeDriver::Init() {
           i - 64, ~(0x1 << 13));  // Rx data Write Relax Order Enable, bit 13
     }
   }
+
+#ifdef DCA_ENABLE
+  //DCA_MODE = DCA 1.0
+  WriteDcaCtrl(0x1 << 1);
+#endif
 }
 
 void ebbrt::IxgbeDriverRep::SetupMultiQueue(uint32_t i) {
-  /*if(!rcv_vector) {
-    rcv_vector =
-      event_manager->AllocateVector([this]() { ebb_->ReceivePoll(); });
-      }*/
+  std::lock_guard<SpinLock> lock(lock_);
   
-  ebbrt::kprintf("**** %s for Core %d\n", __FUNCTION__, i);
-  
-  // allocate memory for descriptor rings
-  //ixgmq[i].reset(new e10Kq(i, Cpu::GetMyNode()));
-  //ixgmq.reset(new e10Kq(i, Cpu::GetMyNode()));
+  //ebbrt::kprintf("**** %s for Core %d\n", __FUNCTION__, i);
   
   // not going to set up receive descripts greater than 63
   ebbrt::kbugon(i >= 64, "can't set up descriptors greater than 63\n");
@@ -1361,11 +1377,7 @@ void ebbrt::IxgbeDriverRep::SetupMultiQueue(uint32_t i) {
   root_.WriteRdt_1(i, 0x0);
   root_.WriteRdh_1(i, 0x0);
   
-  // setup RX interrupts for queue i
-  //dev_.SetMsixEntry(i, rcv_vector, ebbrt::Cpu::GetByIndex(i)->apic_id());
-  //ebbrt::kprintf("apic_id = %d\n", ebbrt::Cpu::GetByIndex(i)->apic_id());
-  
-  // don't set up interrupts for tx since we have head writeback??
+  // don't set up interrupts for tx since we have head writeback
   auto qn = i / 2; // put into correct IVAR
   
   if((i % 2) == 0) { // check if 2xN or 2xN + 1
@@ -1373,14 +1385,14 @@ void ebbrt::IxgbeDriverRep::SetupMultiQueue(uint32_t i) {
     
     root_.WriteIvarAllocval0(qn, 0x1 << 7);
     
-    ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i, 0x1 << 7);
+    //ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i, 0x1 << 7);
   }
   else {
     root_.WriteIvarAlloc2(qn, i << 16);
     
     root_.WriteIvarAllocval2(qn, 0x1 << 23);
     
-    ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i << 16, 0x1 << 23);
+    //ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i << 16, 0x1 << 23);
   }
   
   // no interrupt throttling for msix index i
@@ -1449,10 +1461,20 @@ void ebbrt::IxgbeDriverRep::SetupMultiQueue(uint32_t i) {
   while (root_.ReadTxdctl_enable(i) == 0);
   //ebbrt::kprintf("TX queue enabled\n");
   
-  // TODO: set up dca txctrl FreeBSD?
-  root_.WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
+  // not sure why need to disable relax ordering
+  // do not want device to reorder messages, could have race issues
+  //root_.WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
+
+#ifdef DCA_ENABLE
+
+  auto myapic = ebbrt::Cpu::GetByIndex(i)->apic_id();
+  root_.WriteDcaTxctrl(i, 0x1 << 5); //DCA Enable
+  root_.WriteDcaTxctrl(i, myapic << 24); // CPUID = apic id
+  printf("DCA enabled on TX queue %d with APIC ID %d\n", i, myapic);
   
-  ebbrt::kprintf("%s DONE\n\n", __FUNCTION__);
+#endif
+  
+  //ebbrt::kprintf("%s DONE\n\n", __FUNCTION__);
 }
 
 // IxgbeDriverRep
@@ -1538,9 +1560,10 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
 ebbrt::IxgbeDriverRep::IxgbeDriverRep(const IxgbeDriver& root)
   : root_(root),
     ixgmq_(Cpu::GetMine(), Cpu::GetMyNode()),
+    lock_(const_cast<SpinLock&>(root.lock)),
     receive_callback_([this]() { this->ReceivePoll(); }) {
-  int c = static_cast<int>(Cpu::GetMine());
-  ebbrt::kprintf("%s for Core %d\n", __FUNCTION__, c);
+  //int c = static_cast<int>(Cpu::GetMine());
+  //ebbrt::kprintf("%s for Core %d\n", __FUNCTION__, c);
 }
 
 uint16_t ebbrt::IxgbeDriverRep::ReadRdh_1(uint32_t n) {
