@@ -29,7 +29,7 @@ public:
   
   void HandleFault(ebbrt::idt::ExceptionFrame* ef,
                    uintptr_t faulted_address) override {
-    ebbrt::kprintf("%s Core=%d VPage=%p PPage=%p, FaultAddr=%p Size=%d\n", __PRETTY_FUNCTION__, (int)ebbrt::Cpu::GetMine(), vpage_, ppage_, faulted_address, size_);
+    //ebbrt::kprintf("%s Core=%d VPage=%p PPage=%p, FaultAddr=%p Size=%d\n", __PRETTY_FUNCTION__, (int)ebbrt::Cpu::GetMine(), vpage_, ppage_, faulted_address, size_);
     ebbrt::vmem::MapMemory(vpage_, ppage_, size_);
   }
 };

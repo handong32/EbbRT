@@ -1068,7 +1068,7 @@ void ebbrt::NetworkManager::TcpEntry::SendSegment(TcpSegment& segment) {
   pinfo.csum_offset = 16;  // checksum is 16 bytes into the TCP header
 
   // XXX: Actually store the MSS instead of making this assumption
-  size_t mss = 1460;
+  size_t mss = ebbrt::kTcpMss;
   if (segment.tcp_len > mss) {
     pinfo.gso_type = PacketInfo::kGsoTcpv4;
     pinfo.hdr_len = segment.th.HdrLen();

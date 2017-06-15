@@ -19,12 +19,6 @@
 #include <cinttypes>
 #include <mutex>
 
-//#define JUMBO_EN
-#ifdef JUMBO_EN
-#define JUMBO_SZ 9728 //largest size allowed
-#endif
-#define DCA_EN
-
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
   ixgbe_dev->ebb_ =
@@ -55,10 +49,17 @@ ebbrt::IxgbeDriver::IxgbeDriver(pci::Device& dev)
   
   // each core gets a queue struct
   ebbrt::kprintf("Cpu Count = %d\n", Cpu::Count());
-  
-  auto rcv_vector =
-    event_manager->AllocateVector([this]() { ebb_->ReceivePoll(); });
 
+  // TODO possible race, assuming 1 packet per interrupt
+  // may need to poll
+  auto rcv_vector =
+    event_manager->AllocateVector([this]() {
+	ebb_->ReceivePoll(); });
+
+  // TODO set up interrupt for exceptions
+
+  // TODO threshold for interrupt firing
+  
   ebbrt::kprintf("Interrupt Allocation: \n");
   for(size_t i = 0; i < Cpu::Count(); i++) {
     auto myapic = Cpu::GetByIndex(i)->apic_id();
@@ -66,6 +67,7 @@ ebbrt::IxgbeDriver::IxgbeDriver(pci::Device& dev)
     ebbrt::kprintf("Core: %d, Vector: %d, APIC: %d\n", i, rcv_vector, myapic);
   }
 }
+
 const ebbrt::EthernetAddress& ebbrt::IxgbeDriver::GetMacAddress() {
   return mac_addr_;
 }
@@ -80,6 +82,33 @@ void ebbrt::IxgbeDriver::CpuInit() {
 }
 
 void ebbrt::IxgbeDriver::Run() { ebb_->Run(); }
+
+void ebbrt::IxgbeDriverRep::ReclaimTx() {
+#ifndef TX_HEAD_WB
+  size_t head = ixgmq_.tx_head_;
+  size_t tail = ixgmq_.tx_tail_;
+  tdesc_advance_tx_wbf_t* actx;
+
+  // go through all descriptors owned by HW
+  while(head != tail) {
+    actx = reinterpret_cast<tdesc_advance_tx_wbf_t *>(&(ixgmq_.tx_ring_[head]));
+
+    //if context
+    if(ixgmq_.tx_isctx_[head]) {
+      head = (head + 1) % ixgmq_.tx_size_;
+    }
+    //if non eop
+    else if(!(actx->dd)) {
+      head = (head + 1) % ixgmq_.tx_size_;
+    }
+    // eop
+    else if(actx->dd) {
+      head = (head + 1) % ixgmq_.tx_size_;
+      ixgmq_.tx_head_ = head;
+    }
+  }
+#endif
+}
 
 void ebbrt::IxgbeDriverRep::AddContext(uint8_t idx, uint8_t maclen, uint16_t iplen, uint8_t l4len, enum l4_type l4type) {
 
@@ -166,20 +195,41 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   auto dp = buf->GetDataPointer();
   auto len = buf->ComputeChainDataLength();
   auto count = buf->CountChainElements();
-  auto free_desc = IxgbeDriver::NTXDESCS - (ixgmq_.tx_tail_ - *(reinterpret_cast<uint64_t*>(ixgmq_.txhwbaddr_)));
+  
+  ebbrt::kbugon(len >= 0xA0 * 1000, "%s packet len bigger than max ether length\n", __FUNCTION__);
+  
+//  auto free_desc = IxgbeDriver::NTXDESCS - (ixgmq_.tx_tail_ - *(reinterpret_cast<uint64_t*>(ixgmq_.txhwbaddr_)));
+  
   /*int c = static_cast<int>(Cpu::GetMine());
   if(c > 0) {
     ebbrt::kprintf("%s Core:%d\n", __FUNCTION__, c);
     }*/
   //ebbrt::kprintf("%s Core:%d len=%d count=%d free_desc=%d\n", __FUNCTION__, c, len, count, free_desc);
-  
-  ebbrt::kbugon(len >= 0xA0 * 1000, "%s packet len bigger than max ether length\n", __FUNCTION__);
 
-  ebbrt::kbugon(free_desc < count, "%s not enough free descriptors\n", __FUNCTION__);
+
+/*(#ifdef TX_HEAD_WB
+  ebbrt::kprintf("%s tx_head=%d tx_tail=%d free_desc=%d\n", __FUNCTION__, *(reinterpret_cast<uint64_t*>(ixgmq_.txhwbaddr_)), ixgmq_.tx_tail_, free_desc);
+#else
+  ebbrt::kprintf("%s tx_head=%d tx_tail=%d free_desc=%d\n", __FUNCTION__, ixgmq_.tx_head_, ixgmq_.tx_tail_, free_desc);
+  #endif*/
+
+//TODO threshold for triggering reclaim tx buffers
+#ifndef TX_HEAD_WB
+  size_t free_desc = IxgbeDriver::NTXDESCS - (std::abs(static_cast<int>(ixgmq_.tx_tail_ - ixgmq_.tx_head_)));
+  //free descripts must have enough for count in chained iobufs
+  if(free_desc < (count+1)) {
+    // reclaim buffers
+    ReclaimTx();
+    
+    free_desc = IxgbeDriver::NTXDESCS - (std::abs(static_cast<int>(ixgmq_.tx_tail_ - ixgmq_.tx_head_)));
+    // not enough descriptors got freed
+    if(free_desc < (count+1)) { 
+      return;
+    }
+  }
+#endif
   
-  // get a single buffer of data
-  //auto txbuf = dp.Get(len * sizeof(uint8_t));
-  
+  // NEED CHECKSUM
   if(pinfo.flags & PacketInfo::kNeedsCsum) {
     if(pinfo.csum_offset == 6) {
       AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_udp);
@@ -217,8 +267,9 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     else {
       AddTx(buf->Data(), len, len, true, true, 0, false, true);
     }
-  } 
+  }
   else {
+    // NO CHECKSUM FLAG SET
     // if buffer is chained
     if(buf->IsChained()) {
       size_t counter = 0;
@@ -245,14 +296,11 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     else {
       AddTx(buf->Data(), len, len, true, true, 0, false, false);
     }
-    //ebbrt::kabort("Always need checksum\n");
-    //AddTx(len, true, true, -1, false, false);
   }
-    
+  
   // bump tx_tail
-  WriteTdt_1(Cpu::GetMine(), ixgmq_.tx_tail_); // indicates position beyond last descriptor hw
-
-  //ebbrt::kprintf("%s DONE\n", __FUNCTION__);
+  // indicates position beyond last descriptor hw
+  WriteTdt_1(Cpu::GetMine(), ixgmq_.tx_tail_);
 }
 
 void ebbrt::IxgbeDriver::InitStruct() {
@@ -1482,9 +1530,11 @@ void ebbrt::IxgbeDriverRep::SetupMultiQueue(uint32_t i) {
   // length must also be 128 byte aligned
   root_.WriteTdlen(i, ixgmq_.tx_size_bytes_);
 
+#ifdef TX_HEAD_WB
    //Head_WB_En = 1
   root_.WriteTdwbal(i, (ixgmq_.txhwbaddr_ & 0xFFFFFFFF) | 0x1);
   root_.WriteTdwbah(i, (ixgmq_.txhwbaddr_ >> 32) & 0xFFFFFFFF);
+#endif
   
   // enable transmit path
   root_.WriteDmatxctl_te(0x1);
@@ -1508,8 +1558,6 @@ void ebbrt::IxgbeDriverRep::SetupMultiQueue(uint32_t i) {
     //printf("DCA enabled on TX queue Core %d with APIC ID %d\n", i, myapic);
   }
 #endif
-  
-  //ebbrt::kprintf("%s DONE\n\n", __FUNCTION__);
 }
 
 // IxgbeDriverRep

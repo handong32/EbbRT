@@ -19,6 +19,14 @@
 #include "Pfn.h"
 #include "SlabAllocator.h"
 
+//#define JUMBO_EN
+#ifdef JUMBO_EN
+#define JUMBO_SZ 9728 //largest size allowed
+#endif
+#define DCA_EN
+
+//#define TX_HEAD_WB
+
 namespace ebbrt {
 
 // Queue
@@ -119,13 +127,20 @@ class IxgbeDriver : public EthernetDevice {
       memset(addr, 0, sz);
       tx_isctx_ = static_cast<bool*>(addr);
 
-      // head wb addr
+#ifdef TX_HEAD_WB
+      // TODO: not sure how much exactly to allocate for head wb addr
       tx_head_ = (uint32_t*) malloc (4 * sizeof(uint32_t));
       memset(tx_head_, 0, 4 * sizeof(uint32_t));
+      txhwbaddr_ = reinterpret_cast<uint64_t>(tx_head_);
+      // txhwbaddr must be byte aligned
+      ebbrt::kbugon((txhwbaddr_ & 0x3) != 0, "txhwbaddr not byte aligned\n");
+      kassert((txhwbaddr_ & 0x3) == 0);
+#else
+      tx_head_ = 0;
+#endif
       
       rxaddr_ = reinterpret_cast<uint64_t>(rx_ring_);
       txaddr_ = reinterpret_cast<uint64_t>(tx_ring_);
-      txhwbaddr_ = reinterpret_cast<uint64_t>(tx_head_);
       rx_size_bytes_ = sizeof(rdesc_legacy_t) * NRXDESCS;
       tx_size_bytes_ = sizeof(tdesc_legacy_t) * NTXDESCS;
 
@@ -134,10 +149,6 @@ class IxgbeDriver : public EthernetDevice {
       ebbrt::kbugon((txaddr_ & 0x7F) != 0, "tx_addr_ not 128 byte aligned\n");
       ebbrt::kbugon((rx_size_bytes_ & 0x7F) != 0, "rx_size_bytes_ not 128 byte aligned\n");
       ebbrt::kbugon((tx_size_bytes_ & 0x7F) != 0, "tx_size_bytes_ not 128 byte aligned\n");
-
-      // txhwbaddr must be byte aligned
-      ebbrt::kbugon((txhwbaddr_ & 0x3) != 0, "txhwbaddr not byte aligned\n");
-      kassert((txhwbaddr_ & 0x3) == 0);
       
       //ebbrt::kprintf("%s Core: %d: rx_addr = %p, tx_addr = %p, txhwbaddr = %p, rx_size_bytes_ = %p, tx_size_bytes_ = %p\n", __FUNCTION__, idx_, rxaddr_, txaddr_, txhwbaddr_, rx_size_bytes_, tx_size_bytes_);
     }
@@ -157,11 +168,14 @@ class IxgbeDriver : public EthernetDevice {
     
     std::vector<std::unique_ptr<MutIOBuf>> circ_buffer_;
     
-    //void* addr_;
     rdesc_legacy_t* rx_ring_;
     tdesc_legacy_t* tx_ring_;
     bool* tx_isctx_;
+#ifdef TX_HEAD_WB
     uint32_t *tx_head_;
+#else
+    size_t tx_head_;
+#endif
   };
 
   SpinLock lock;
@@ -372,6 +386,7 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
   void WriteEimcn(uint32_t n, uint32_t m);
   void ReadEicr();
   void ReadEims();
+  void ReclaimTx();
   uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr);
 
   const IxgbeDriver& root_;
