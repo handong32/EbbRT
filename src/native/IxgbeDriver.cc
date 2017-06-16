@@ -114,6 +114,8 @@ void ebbrt::IxgbeDriverRep::AddContext(uint8_t idx, uint8_t maclen, uint16_t ipl
 
   tdesc_advance_ctxt_wb_t *actx;
 
+  // TODO set MSS when jumbo packets
+  
   auto tail = ixgmq_.tx_tail_;
   actx = reinterpret_cast<tdesc_advance_ctxt_wb_t *>(&(ixgmq_.tx_ring_[tail]));
 
@@ -177,7 +179,8 @@ void ebbrt::IxgbeDriverRep::AddTx(const uint8_t *pa, uint64_t len, uint64_t tota
   else {
     actx->eop = 0;
   }
-  
+
+  //TODO enable ip checksum
   if(ctx != -1) {
     actx->idx = ctx;
     actx->cc = 1;
@@ -195,6 +198,8 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   auto dp = buf->GetDataPointer();
   auto len = buf->ComputeChainDataLength();
   auto count = buf->CountChainElements();
+  bool ip_cksum = false;
+  bool tcpudp_cksum = false;
   
   ebbrt::kbugon(len >= 0xA0 * 1000, "%s packet len bigger than max ether length\n", __FUNCTION__);
   
@@ -228,9 +233,17 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     }
   }
 #endif
+
+  if(pinfo.flags & PacketInfo::kNeedsIpCsum) {
+    ip_cksum = true;
+  }
   
   // NEED CHECKSUM
   if(pinfo.flags & PacketInfo::kNeedsCsum) {
+    tcpudp_cksum = true;
+    
+    //ebbrt::kprintf("%s need checksum\n\n", __FUNCTION__);
+    
     if(pinfo.csum_offset == 6) {
       AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_udp);
     }
@@ -249,26 +262,27 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
 	
 	//first buffer
 	if(counter == 1) {
-	  AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, true, false, 0, false, true);
+	  AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, true, false, 0, ip_cksum, tcpudp_cksum);
 	}
 	else
 	{
 	  //last buffer
 	  if(counter == count) {
-	    AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, false, true, 0, false, true);
+	    AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, false, true, 0, ip_cksum, tcpudp_cksum);
 	  }
 	  else {
-	    AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, false, false, 0, false, true);
+	    AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, false, false, 0, ip_cksum, tcpudp_cksum);
 	  }
 	}
       }
     }
     // not chained
     else {
-      AddTx(buf->Data(), len, len, true, true, 0, false, true);
+      AddTx(buf->Data(), len, len, true, true, 0, ip_cksum, tcpudp_cksum);
     }
   }
   else {
+    //ebbrt::kprintf("%s NO checksum\n\n", __FUNCTION__);
     // NO CHECKSUM FLAG SET
     // if buffer is chained
     if(buf->IsChained()) {
@@ -278,23 +292,23 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
 	
 	//first buffer
 	if(counter == 1) {
-	  AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, true, false, 0, false, false);
+	  AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, true, false, 0, ip_cksum, tcpudp_cksum);
 	}
 	else
 	{
 	  //last buffer
 	  if(counter == count) {
-	    AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, false, true, 0, false, false);
+	    AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, false, true, 0, ip_cksum, tcpudp_cksum);
 	  }
 	  else {
-	    AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, false, false, 0, false, false);
+	    AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len, false, false, 0, ip_cksum, tcpudp_cksum);
 	  }
 	}
       }
     }
     // not chained
     else {
-      AddTx(buf->Data(), len, len, true, true, 0, false, false);
+      AddTx(buf->Data(), len, len, true, true, 0, ip_cksum, tcpudp_cksum);
     }
   }
   

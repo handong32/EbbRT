@@ -25,7 +25,7 @@
 #endif
 #define DCA_EN
 
-//#define TX_HEAD_WB
+#define TX_HEAD_WB
 
 namespace ebbrt {
 
