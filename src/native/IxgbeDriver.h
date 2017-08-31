@@ -19,6 +19,7 @@
 #include "Pfn.h"
 #include "SlabAllocator.h"
 
+//#define RSC_EN
 //#define JUMBO_EN
 #ifdef JUMBO_EN
 #define JUMBO_SZ 9728 //largest size allowed
@@ -92,16 +93,19 @@ class IxgbeDriver : public EthernetDevice {
   class e10Kq {
   public:    
   e10Kq(size_t idx, Nid nid) : rx_head_(0), rx_tail_(0), rx_size_(NRXDESCS),
-      tx_tail_(0), tx_last_tail_(0), tx_size_(NTXDESCS), idx_(idx) {
+      tx_tail_(0), tx_last_tail_(0), tx_size_(NTXDESCS), idx_(idx), rxflag_(0),
+      rsc_used (false) {
       
       circ_buffer_.reserve(NRXDESCS);
       for(uint32_t k=0; k < NRXDESCS; k ++)
       {
 	circ_buffer_.emplace_back(MakeUniqueIOBuf(RXBUFSZ, true));
       }
-	
+
+      rsc_chain_.reserve(NRXDESCS);
+      
       // RX
-      auto sz = align::Up(sizeof(rdesc_legacy_t) * NRXDESCS, 4096);
+      auto sz = align::Up(sizeof(rdesc_legacy_t) * (NRXDESCS), 4096);
       auto order = Fls(sz - 1) - pmem::kPageShift + 1;
       auto page = page_allocator->Alloc(order, nid);
       kbugon(page == Pfn::None(), "ixgbe: page allocation failed in %s", __FUNCTION__);
@@ -165,12 +169,15 @@ class IxgbeDriver : public EthernetDevice {
     uint64_t rxaddr_;
     uint64_t txaddr_;
     uint64_t txhwbaddr_;
+    uint64_t rxflag_;
     
     std::vector<std::unique_ptr<MutIOBuf>> circ_buffer_;
-    
+    std::vector<uint32_t> rsc_chain_;
+      
     rdesc_legacy_t* rx_ring_;
     tdesc_legacy_t* tx_ring_;
     bool* tx_isctx_;
+    bool rsc_used;
 #ifdef TX_HEAD_WB
     uint32_t *tx_head_;
 #else
@@ -316,6 +323,13 @@ class IxgbeDriver : public EthernetDevice {
   void WriteDcaCtrl(uint32_t m);
 
   void WriteMaxfrs(uint32_t m);
+
+  void WriteRfctl(uint32_t m);
+
+  void WriteRscctl(uint32_t n, uint32_t m) const;
+  void WritePsrtype(uint32_t n, uint32_t m) const;
+
+  void WriteRxcsum(uint32_t m);
   
   uint8_t ReadRdrxctlDmaidone();
 
@@ -351,7 +365,7 @@ class IxgbeDriver : public EthernetDevice {
 
   // Process
   void ProcessPacket(uint32_t n);
-  uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr);
+  uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_t* rxflag, bool* process_rsc);
   void SendPacket(uint32_t n);
 
   pci::Device& dev_;
@@ -380,14 +394,15 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
   void SetupMultiQueue(uint32_t i);
   
  private:
-  uint16_t ReadRdh_1(uint32_t n);
   void WriteRdt_1(uint32_t n, uint32_t m);
+  uint16_t ReadRdt_1(uint32_t n);
+  uint16_t ReadRdh_1(uint32_t n);
   void WriteTdt_1(uint32_t n, uint32_t m);
   void WriteEimcn(uint32_t n, uint32_t m);
   void ReadEicr();
   void ReadEims();
   void ReclaimTx();
-  uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr);
+  uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_t* rxflag, bool* process_rsc, uint32_t* rnt);
 
   const IxgbeDriver& root_;
   //e10k_queue_t& ixgq_;

@@ -21,34 +21,27 @@ ebbrt::NetworkManager::NewInterface(EthernetDevice& ether_dev) {
   return *interface_;
 }
 
-void ebbrt::NetworkManager::Interface::Receive(std::unique_ptr<MutIOBuf> buf) {
+void ebbrt::NetworkManager::Interface::Receive(std::unique_ptr<MutIOBuf> buf, uint64_t rxflag) {
   auto packet_len = buf->ComputeChainDataLength();
 
-  //ebbrt::kprintf("%s packet_len->%lld \n", __PRETTY_FUNCTION__, packet_len);
+  //ebbrt::kprintf("%s packet_len=%d \n", __FUNCTION__, packet_len);
   
   // Drop packets that are too small
-  if (packet_len <= sizeof(EthernetHeader))
+  if (packet_len <= sizeof(EthernetHeader)) {
+    ebbrt::kprintf("\t%s a\n", __FUNCTION__);
     return;
-
+  }
   auto dp = buf->GetMutDataPointer();
-  //auto tbuf = dp.Data();
-  
-  // ebbrt::kprintf("tbuf: %p %p\n", tbuf, buf->MutData());
-  
-  // for(int i = 0; i < 20; i++)
-  // {
-  //   ebbrt::kprintf("0x%02X ", tbuf[i]);
-  // }
-  // ebbrt::kprintf("\n");
-  
   
   auto& eth_header = dp.Get<EthernetHeader>();
+  //ebbrt::kprintf("\t%s b\n", __FUNCTION__);
   //ebbrt::kprintf("sizeof etherheader: %d addr:%p\n", sizeof(EthernetHeader), dp.Data());
 
   //ebbrt::kprintf("length = %d ischain = %d\n", buf->Length(), buf->IsChained());
   
   buf->Advance(sizeof(EthernetHeader));
   //ebbrt::kprintf("buf->Advance -> %p\n", buf->MutData());
+  //ebbrt::kprintf("\t%s c\n", __FUNCTION__);
   
   switch (ntohs(eth_header.type)) {
   case kEthTypeIp: {
@@ -73,7 +66,7 @@ void ebbrt::NetworkManager::Interface::Receive(std::unique_ptr<MutIOBuf> buf) {
     // ebbrt::kprintf("\n");
     
     //ebbrt::kprintf("eth type ip\n");
-    ReceiveIp(eth_header, std::move(buf));
+    ReceiveIp(eth_header, std::move(buf), rxflag);
     break;
   }
   case kEthTypeArp: {
@@ -81,6 +74,11 @@ void ebbrt::NetworkManager::Interface::Receive(std::unique_ptr<MutIOBuf> buf) {
     ReceiveArp(eth_header, std::move(buf));
     break;
   }
+    /*default: {
+    //ebbrt::kprintf("\t%s d\n", __FUNCTION__);
+    ebbrt::kabort("%s error\n", __FUNCTION__);
+    }*/
+    
   }
 
   //ebbrt::kprintf("receive done\n\n\n");

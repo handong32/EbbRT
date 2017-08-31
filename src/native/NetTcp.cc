@@ -195,9 +195,9 @@ ebbrt::Ipv4Address ebbrt::NetworkManager::TcpPcb::GetRemoteAddress() {
 
 // Receive a TCP packet on an interface
 void ebbrt::NetworkManager::Interface::ReceiveTcp(
-    const Ipv4Header& ih, std::unique_ptr<MutIOBuf> buf) {
+  const Ipv4Header& ih, std::unique_ptr<MutIOBuf> buf, uint64_t rxflag) {
   auto packet_len = buf->ComputeChainDataLength();
-
+  
   // Ensure we have a header
   if (unlikely(packet_len < sizeof(TcpHeader)))
     return;
@@ -210,14 +210,25 @@ void ebbrt::NetworkManager::Interface::ReceiveTcp(
   if (unlikely(addr->isBroadcast(ih.dst) || ih.dst.isMulticast()))
     return;
 
-  // XXX: Check if rxcsum is supported
+  // TODO: Check if rxcsum is supported
   // if (unlikely(IpPseudoCsum(*buf, ih.proto, ih.src, ih.dst)))
   //   return;
+  if(unlikely((rxflag & RXFLAG_L4CS) == 0)) {
+    ebbrt::kprintf("%s RXFLAG_L4CS failed\n");
+    return;
+  }
 
+  if(unlikely((rxflag & RXFLAG_L4CS_VALID) == 0)) {
+    ebbrt::kprintf("%s RXFLAG_L4CS_VALID failed\n");
+    return;
+  }
+  
   auto hdr_len = tcp_header.HdrLen();
   if (unlikely(hdr_len < sizeof(TcpHeader) || hdr_len > packet_len))
     return;
 
+  //ebbrt::kprintf("%s packet_len=%d hdr_len=%d\n", __FUNCTION__, packet_len, hdr_len);
+  
   // salient info for a tcp packet which we reuse throughout the process
   TcpInfo info = {.src_port = ntohs(tcp_header.src_port),
                   .dst_port = ntohs(tcp_header.dst_port),

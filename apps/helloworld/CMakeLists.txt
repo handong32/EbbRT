@@ -28,11 +28,12 @@ if( ${CMAKE_SYSTEM_NAME} STREQUAL "EbbRT")
 elseif( ${CMAKE_SYSTEM_NAME} STREQUAL "Linux" )
 
   # TODO(jmcadden): remove source-dir requirement
-  if(DEFINED ENV{EBBRT_SRCDIR})
-    list(APPEND CMAKE_MODULE_PATH
-      "$ENV{EBBRT_SRCDIR}/hosted/cmake/Modules")
-  endif()
-
+  #if(DEFINED ENV{EBBRT_SRCDIR})
+  #  list(APPEND CMAKE_MODULE_PATH
+  #    "$ENV{EBBRT_SRCDIR}/hosted/cmake/Modules")
+  #endif()
+  set(CMAKE_MODULE_PATH "~/github/EbbRT/src/cmake/Modules")
+  
   find_package(EbbRT REQUIRED)
   find_package(Boost 1.53.0 REQUIRED COMPONENTS
     filesystem system coroutine context )

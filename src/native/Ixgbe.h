@@ -45,6 +45,11 @@ enum l4_type {
 #define IPHDR_LEN 20
 #define UDPHDR_LEN 8
 
+#define RXFLAG_IPCS (1 << 0)
+#define RXFLAG_IPCS_VALID (1 << 1)
+#define RXFLAG_L4CS (1 << 2)
+#define RXFLAG_L4CS_VALID (1 << 3)
+
 /***********************
    * RX
    * Descriptors
@@ -67,14 +72,23 @@ typedef union {
         // uint64_t status : 8;
         uint64_t dd : 1;
         uint64_t eop : 1;
-        uint64_t rsvd : 1;
+        uint64_t rsvd1 : 1;
         uint64_t vp : 1;
         uint64_t udpcs : 1;
         uint64_t l4cs : 1;
         uint64_t ipcs : 1;
         uint64_t pif : 1;
 
-        uint64_t errors : 8;
+        //uint64_t errors : 8;
+	uint64_t rxe : 1;
+	uint64_t rsvd2 : 1;
+	uint64_t rsvd3 : 1;
+	uint64_t rsvd4 : 1;
+	uint64_t rsvd5 : 1;
+	uint64_t rsvd6 : 1;
+	uint64_t tcpe : 1;
+	uint64_t ipe : 1;
+	
         uint64_t vlan_tag : 16;
       };  // struct
 
@@ -85,10 +99,14 @@ typedef union {
 } rdesc_legacy_t;  // typedef union
 
 // 7.1.6.1 Advanced Receive Descriptors Read Format
-typedef struct {
-  uint64_t packet_buffer;
-  uint64_t header_buffer;
-} rdesc_advance_rf_t;
+typedef union {
+  uint64_t raw[2];
+  
+  struct {
+    uint64_t packet_buffer;
+    uint64_t header_buffer;
+  } __attribute__((packed));  // struct 
+} rdesc_adv_rf_t;
 
 // 7.1.6.2 Advanced Receive Descriptors — Write-Back Format
 typedef union {
@@ -163,18 +181,18 @@ typedef union {
         uint32_t rxe : 1;
         uint32_t l4e : 1;
         uint32_t ipe : 1;
-      } status_last_descriptor;
+      }; //status_last_descriptor;
 
       struct {
         // extended status
-        uint32_t dd : 1;
-        uint32_t eop : 1;
-        uint32_t rsvd : 2;
+        uint32_t dd2 : 1;
+        uint32_t eop2 : 1;
+        uint32_t rsvd_4 : 2;
         uint32_t next_descriptor_ptr : 16;
 
         // extended error
         uint32_t error : 12;
-      } status_non_last_descriptor;
+      }; //status_non_last_descriptor;
     };  // union raw32_3
 
     union {
@@ -186,7 +204,7 @@ typedef union {
     };  // union raw32_4
 
   } __attribute__((packed));  // struct
-} rdesc_advance_wbf_t;
+} rdesc_adv_wb_t;
 
 /***********************
  * TX

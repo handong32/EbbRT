@@ -95,7 +95,7 @@ void ebbrt::runtime::Init() {
     idstr = idstr.substr(0, gap);
   }
 
-  auto allocation_id = atoi(idstr.c_str());
+  //auto allocation_id = atoi(idstr.c_str());
   auto nport = atoi(port.c_str());
   auto naddr = atoi(host.c_str());
   auto addr = Ipv4Address(htonl(naddr));
@@ -108,9 +108,9 @@ void ebbrt::runtime::Init() {
   event_manager->SaveContext(context);
 
   // Send reply back
-  auto buf = MakeUniqueIOBuf(sizeof(uint16_t));
-  auto dp = buf->GetMutDataPointer();
-  dp.Get<uint16_t>() = htons(allocation_id);
-  connection->Send(std::move(buf));
-  connection->Pcb().Output();
+  //auto buf = MakeUniqueIOBuf(sizeof(uint16_t));
+  //auto dp = buf->GetMutDataPointer();
+  //dp.Get<uint16_t>() = htons(allocation_id);
+  //connection->Send(std::move(buf));
+  //connection->Pcb().Output();
 }
