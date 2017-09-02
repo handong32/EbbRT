@@ -16,13 +16,15 @@
 #include "Net.h"
 
 #include <atomic>
+#include <cinttypes>
+#include <mutex>
 
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
 
   ixgbe_dev->Init();
   ixgbe_dev->ebb_ =
-      IxgbeDriverRep::Create(ixgbe_dev, ebb_allocator->AllocateLocal());
+    IxgbeDriverRep::Create(ixgbe_dev, ebb_allocator->AllocateLocal());
   
   for(size_t i = 0; i < Cpu::Count(); i++) {
     ixgbe_dev->SetupMultiQueue(i);
@@ -770,6 +772,20 @@ void ebbrt::IxgbeDriver::WriteSwfwSyncSmBits2(uint32_t m) {
   bar0_.Write32(0x10160, reg & m);
 }
 
+// 8.2.3.11.4 DCA Control Register — DCA_CTRL (0x11074; RW)
+void ebbrt::IxgbeDriver::WriteDcaCtrl(uint32_t m) {
+  auto reg = bar0_.Read32(0x11074);
+  bar0_.Write32(0x11074, reg | m);
+}
+
+// 8.2.3.11.2 Tx DCA Control Registers — DCA_TXCTRL[n] (0x0600C + 0x40*n,
+// n=0...127; RW)
+void ebbrt::IxgbeDriver::WriteDcaTxctrl(uint32_t n, uint32_t m) {
+  auto reg = bar0_.Read32(0x0600C + 0x40 * n);
+  bar0_.Write32(0x0600C + 0x40 * n, reg | m);
+  //ebbrt::kprintf("%s 0x%X\n", __FUNCTION__, reg);
+}
+
 // 8.2.3.8.1 Receive Descriptor Base Address Low — RDBAL[n] (0x01000 + 0x40*n,
 // n=0...63 and 0x0D000 + 0x40*(n-64), n=64...127; RW)
 void ebbrt::IxgbeDriver::WriteRdbal_1(uint32_t n, uint32_t m) {
@@ -1272,6 +1288,11 @@ void ebbrt::IxgbeDriver::Init() {
           i - 64, ~(0x1 << 13));  // Rx data Write Relax Order Enable, bit 13
     }
   }
+
+#ifdef DCA_ENABLE
+  //DCA_MODE = DCA 1.0
+  WriteDcaCtrl(0x1 << 1);
+#endif
 }
 
 void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
@@ -1280,7 +1301,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
       event_manager->AllocateVector([this]() { ebb_->ReceivePoll(); });
   }
   
-  ebbrt::kprintf("%s for Core %d, rcv_vector = 0x%X\n", __FUNCTION__, i, rcv_vector);
+  //ebbrt::kprintf("%s for Core %d, rcv_vector = 0x%X\n", __FUNCTION__, i, rcv_vector);
 
   // allocate memory for descriptor rings
   ixgmq[i].reset(new e10Kq(i, Cpu::GetMyNode()));
@@ -1315,23 +1336,19 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   
   // setup RX interrupts for queue i
   dev_.SetMsixEntry(i, rcv_vector, ebbrt::Cpu::GetByIndex(i)->apic_id());
-  ebbrt::kprintf("apic_id = %d\n", ebbrt::Cpu::GetByIndex(i)->apic_id());
+  //ebbrt::kprintf("apic_id = %d\n", ebbrt::Cpu::GetByIndex(i)->apic_id());
   
   // don't set up interrupts for tx since we have head writeback??
   auto qn = i / 2; // put into correct IVAR
   
   if((i % 2) == 0) { // check if 2xN or 2xN + 1
-    WriteIvarAlloc0(qn, i); // rx interrupt allocation corresponds to index i * 2 in MSI-X table
-    
+    WriteIvarAlloc0(qn, i); // rx interrupt allocation corresponds to index i * 2 in MSI-X table     
     WriteIvarAllocval0(qn, 0x1 << 7);
-    
     //ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i, 0x1 << 7);
   }
   else {
     WriteIvarAlloc2(qn, i << 16);
-    
     WriteIvarAllocval2(qn, 0x1 << 23);
-    
     //ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i << 16, 0x1 << 23);
   }
   
@@ -1361,7 +1378,6 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   WriteRxctrl(0x1);
   // enable RX_DIS
   WriteSecrxctrl_Rx_Dis(0x0 << 1);
-  //ebbrt::kprintf("RX enabled\n");
   
   // add buffer to each descriptor
   for (size_t j = 0; j < NRXDESCS - 1; j++) {
@@ -1376,9 +1392,6 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   // bump tail pts via register rdt to enable descriptor fetching by setting to
   // length of ring minus one
   WriteRdt_1(i, ixgmq[i]->rx_tail_);
-  
-  //ebbrt::kprintf("RX Queue setup complete - head=%d tail=%d\n", ixgmq[i]->rx_head_,
-  //ixgmq[i]->rx_tail_);
   
   // program base address registers
   WriteTdbal(i, ixgmq[i]->txaddr_ & 0xFFFFFFFF);
@@ -1402,9 +1415,16 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   //ebbrt::kprintf("TX queue enabled\n");
   
   // TODO: set up dca txctrl FreeBSD?
-  WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
+  //WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
 
-  ebbrt::kprintf("%s DONE\n\n", __FUNCTION__);
+#ifdef DCA_ENABLE
+  auto myapic = ebbrt::Cpu::GetByIndex(i)->apic_id();
+  WriteDcaTxctrl(i, 0x1 << 5); //DCA Enable
+  WriteDcaTxctrl(i, myapic << 24); // CPUID = apic id
+  printf("DCA enabled on TX queue %d with APIC ID %d\n", i, myapic);
+#endif
+  
+  //ebbrt::kprintf("%s DONE\n\n", __FUNCTION__);
 }
 
 // IxgbeDriverRep
@@ -1412,15 +1432,12 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr) {
   rdesc_legacy_t tmp;
   tmp = ixgmq_.rx_ring_[ixgmq_.rx_head_];
 
-  //std::atomic_thread_fence(std::memory_order_release);
-
   // if got new packet
   if (tmp.dd && tmp.eop) {
 
     // set len and address
     *len = tmp.length;
-    //*bAddr = tmp.buffer_address;
-
+    
     // reset descriptor
     ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0] = 0;
     ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[1] = 0;
@@ -1464,20 +1481,11 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
 
       //TODO hack - need to reallocate IOBuf after its been moved to Receive
       auto b = std::move(ixgmq_.circ_buffer_[tail]);
-
-      /*ebbrt::kprintf("%s rx_tail_ -> %d\n", __FUNCTION__, ixgmq_.rx_tail_);
-      //auto p1 = b.Get(len * sizeof(uint8_t));
-      auto p1 = reinterpret_cast<uint8_t*>(b->MutData());
-      for (size_t i = 0; i < len; i++) {
-	ebbrt::kprintf("%02X ", p1[i]);
-      }
-      ebbrt::kprintf("\n\n");*/
       
       ixgmq_.circ_buffer_[tail] = std::move(MakeUniqueIOBuf(IxgbeDriver::RXBUFSZ));
       auto rxphys = reinterpret_cast<uint64_t>((ixgmq_.circ_buffer_[tail])->MutData());
       
       ixgmq_.rx_ring_[tail].buffer_address = rxphys;
-      //ebbrt::kprintf("%s %p %p\n", bAddr, rxphys);
       root_.itf_.Receive(std::move(b));
     }
   }
@@ -1485,7 +1493,6 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   // TODO: Update tail register here or above?
   if(count > 0)
   {
-    //ebbrt::kprintf("%s rx_tail_ -> %d\n", __FUNCTION__, ixgmq_.tx_tail_);
     // update reg
     WriteRdt_1(Cpu::GetMine(), ixgmq_.rx_tail_);
   }

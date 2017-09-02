@@ -19,6 +19,8 @@
 #include "Pfn.h"
 #include "SlabAllocator.h"
 
+#define DCA_ENABLE
+
 namespace ebbrt {
 
 // Queue
@@ -102,37 +104,7 @@ class IxgbeDriver : public EthernetDevice {
 	circ_buffer_.emplace_back(MakeUniqueIOBuf(RXBUFSZ, true));
       }
       
-      /*auto sz = align::Up(sizeof(rdesc_legacy_t) * NTXDESCS +
-			  sizeof(tdesc_legacy_t) * NRXDESCS +
-			  sizeof(bool) * NTXDESCS +
-			  sizeof(uint32_t) * 4, 4096);
-
-      auto order = Fls(sz - 1) - pmem::kPageShift + 1;
-      auto page = page_allocator->Alloc(order, nid);
-      kbugon(page == Pfn::None(), "ixgbe: page allocation failed in %s", __FUNCTION__);
-      addr_ = reinterpret_cast<void*>(page.ToAddr());
-      memset(addr_, 0, sz);
-      
-      rx_ring_ = static_cast<rdesc_legacy_t*>(addr_);
-      tx_ring_ = static_cast<tdesc_legacy_t*>(
-	static_cast<void*>(
-	  reinterpret_cast<char*>(rx_ring_) + NRXDESCS + sizeof(rdesc_legacy_t)
-	  )
-	);
-      
-	tx_isctx_ = static_cast<bool*>(
-	static_cast<void*>(
-	  reinterpret_cast<char*>(tx_ring_) + NTXDESCS * sizeof(tdesc_legacy_t)
-	  )
-	);
-      
-	tx_head_ = static_cast<uint32_t*>(	
-	static_cast<void*>(
-	  reinterpret_cast<char*>(tx_isctx_) + NTXDESCS * sizeof(bool)
-	  )
-	);*/
-
-      txbuffer = (uint8_t*) malloc (sizeof(uint8_t) * 4096);
+      //txbuffer = (uint8_t*) malloc (sizeof(uint8_t) * 4096);
 	
       // RX
       auto sz = align::Up(sizeof(rdesc_legacy_t) * NRXDESCS, 4096);
@@ -204,7 +176,7 @@ class IxgbeDriver : public EthernetDevice {
     tdesc_legacy_t* tx_ring_;
     bool* tx_isctx_;
     uint32_t *tx_head_;
-    uint8_t *txbuffer;
+    //uint8_t *txbuffer;
   };
 
  private:
@@ -291,9 +263,11 @@ class IxgbeDriver : public EthernetDevice {
   void WriteRttbcnrc(uint32_t m);
 
   void WriteDcaTxctrlTxdescWbro(uint32_t n, uint32_t m);
+  void WriteDcaTxctrl(uint32_t n, uint32_t m);
   void WriteDcaRxctrl_1(uint32_t n, uint32_t m);
   void WriteDcaRxctrl_2(uint32_t n, uint32_t m);
-
+  void WriteDcaCtrl(uint32_t m);
+  
   void WriteRdbal_1(uint32_t n, uint32_t m);
   void WriteRdbal_2(uint32_t n, uint32_t m);
 

@@ -462,9 +462,9 @@ void ebbrt::pci::Device::SetMsixEntry(size_t entry, uint8_t vector,
   msix_bar.Write32(offset + kMsixTableEntryAddrHigh, 0x0);
   msix_bar.Write32(offset + kMsixTableEntryData, vector);
   
-  ebbrt::kprintf("%s msix_index = %d, ", __FUNCTION__, entry);
-  ebbrt::kprintf("dest apic 0x%X at address %p, ", 0xFEE00000 | dest << 12, offset + kMsixTableEntryAddr);
-  ebbrt::kprintf("vector 0x%X at address %p\n", vector, offset + kMsixTableEntryData);
+  //ebbrt::kprintf("%s msix_index = %d, ", __FUNCTION__, entry);
+  //ebbrt::kprintf("dest apic 0x%X at address %p, ", 0xFEE00000 | dest << 12, offset + kMsixTableEntryAddr);
+  //ebbrt::kprintf("vector 0x%X at address %p\n", vector, offset + kMsixTableEntryData);
   
   MsixUnmaskEntry(entry);
 }
