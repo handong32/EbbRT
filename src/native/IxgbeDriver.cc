@@ -1290,7 +1290,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   
   // update register RDBAL, RDBAH with receive descriptor base address
   WriteRdbal_1(i, ixgmq[i]->rxaddr_ & 0xFFFFFFFF);
-  WriteRdbah_1(i, (ixgmq[i]->rxaddr_ >> 32) & 0xFFFFFFFF);
+  //WriteRdbah_1(i, (ixgmq[i]->rxaddr_ >> 32) & 0xFFFFFFFF);
 
   // set to number of bytes allocated for receive descriptor ring
   WriteRdlen_1(i, ixgmq[i]->rx_size_bytes_);
@@ -1325,14 +1325,14 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
     
     WriteIvarAllocval0(qn, 0x1 << 7);
     
-    ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i, 0x1 << 7);
+    //ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i, 0x1 << 7);
   }
   else {
     WriteIvarAlloc2(qn, i << 16);
     
     WriteIvarAllocval2(qn, 0x1 << 23);
     
-    ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i << 16, 0x1 << 23);
+    //ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i << 16, 0x1 << 23);
   }
   
   // no interrupt throttling for msix index i
@@ -1437,20 +1437,19 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   uint32_t len;
   uint64_t bAddr;
   auto count = 0;
+  static int tt = 0;
 
-  // poll mode
-  //uint32_t mycpu = static_cast<uint32_t>(Cpu::GetMine());
-  //ebbrt::kprintf("Switching to poll mode for cpu %d\n", mycpu);
-  //disable interrupt
-  //WriteEimcn(mycpu, 0x1);
+  if(!tt) {
+    tt = 1;
+    int c = static_cast<int>(Cpu::GetMine());
+    ebbrt::kprintf("%s for Core %d\n", __FUNCTION__, c);
+  }
   
-//process:
   // get address of buffer with data
   while (GetRxBuf(&len, &bAddr) == 0) {
 
     // done with buffer addr above, now to reuse it
     auto tail = ixgmq_.rx_tail_;
-    //ixgmq_.rx_ring_[tail].buffer_address = bAddr;
 
     // bump tail ptr
     ixgmq_.rx_tail_ = (tail + 1) % ixgmq_.rx_size_;
@@ -1490,7 +1489,6 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
     // update reg
     WriteRdt_1(Cpu::GetMine(), ixgmq_.rx_tail_);
   }
-  //goto process;
 }
 
 ebbrt::IxgbeDriverRep::IxgbeDriverRep(const IxgbeDriver& root)

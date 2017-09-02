@@ -161,7 +161,7 @@ ebbrt::Main(multiboot::Information* mbi) {
 #ifdef __EBBRT_ENABLE_DISTRIBUTED_RUNTIME__
           Messenger::Init();
 	  ebbrt::kprintf("main 2\n");
-          runtime::Init();
+          //runtime::Init();
 	  ebbrt::kprintf("main 3\n");
 #endif
 #endif
