@@ -772,6 +772,14 @@ void ebbrt::IxgbeDriver::WriteSwfwSyncSmBits2(uint32_t m) {
   bar0_.Write32(0x10160, reg & m);
 }
 
+// 8.2.3.11.1 Rx DCA Control Register — DCA_RXCTRL[n] (0x0100C + 0x40*n,
+// n=0...63 and 0x0D00C + 0x40*(n-64), // n=0...63 and 0x0D00C + 0x40*(n-64),
+// n=64...127 / 0x02200 + 4*n, [n=0...15]; RW) // n=64...127 / 0x02200 + 4*n, [n=0...15]; RW)
+void ebbrt::IxgbeDriver::WriteDcaRxctrl(uint32_t n, uint32_t m) {
+  auto reg = bar0_.Read32(0x0100C + 0x40 * n);
+  bar0_.Write32(0x0100C + 0x40 * n, reg | m);
+}
+
 // 8.2.3.11.4 DCA Control Register — DCA_CTRL (0x11074; RW)
 void ebbrt::IxgbeDriver::WriteDcaCtrl(uint32_t m) {
   auto reg = bar0_.Read32(0x11074);
@@ -1392,6 +1400,19 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   // bump tail pts via register rdt to enable descriptor fetching by setting to
   // length of ring minus one
   WriteRdt_1(i, ixgmq[i]->rx_tail_);
+
+#ifdef DCA_ENABLE
+  auto myapic = ebbrt::Cpu::GetByIndex(i)->apic_id();
+  
+  WriteDcaRxctrl(i, 0x1 << 5); //Descriptor DCA EN
+  WriteDcaRxctrl(i, 0x1 << 6); //Rx Header DCA EN
+  WriteDcaRxctrl(i, 0x1 << 7); //Payload DCA EN
+  
+  WriteDcaRxctrl(i, myapic << 24); // CPUID = apic id
+
+  WriteDcaTxctrl(i, 0x1 << 5); //DCA Enable
+  WriteDcaTxctrl(i, myapic << 24); // CPUID = apic id
+#endif
   
   // program base address registers
   WriteTdbal(i, ixgmq[i]->txaddr_ & 0xFFFFFFFF);
@@ -1416,15 +1437,6 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   
   // TODO: set up dca txctrl FreeBSD?
   //WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
-
-#ifdef DCA_ENABLE
-  auto myapic = ebbrt::Cpu::GetByIndex(i)->apic_id();
-  WriteDcaTxctrl(i, 0x1 << 5); //DCA Enable
-  WriteDcaTxctrl(i, myapic << 24); // CPUID = apic id
-  printf("DCA enabled on TX queue %d with APIC ID %d\n", i, myapic);
-#endif
-  
-  //ebbrt::kprintf("%s DONE\n\n", __FUNCTION__);
 }
 
 // IxgbeDriverRep

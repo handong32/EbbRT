@@ -264,6 +264,7 @@ class IxgbeDriver : public EthernetDevice {
 
   void WriteDcaTxctrlTxdescWbro(uint32_t n, uint32_t m);
   void WriteDcaTxctrl(uint32_t n, uint32_t m);
+  void WriteDcaRxctrl(uint32_t n, uint32_t m);
   void WriteDcaRxctrl_1(uint32_t n, uint32_t m);
   void WriteDcaRxctrl_2(uint32_t n, uint32_t m);
   void WriteDcaCtrl(uint32_t m);
