@@ -43,9 +43,11 @@ void ebbrt::NetworkManager::Interface::ReceiveIcmp(
 
     ip_header.ttl = kIpDefaultTtl;
     ip_header.chksum = 0;
-    ip_header.chksum = ip_header.ComputeChecksum();
-
+    // ip checksum offload
+    PacketInfo pinfo;
+    pinfo.flags |= PacketInfo::kNeedsIpCsum;
+    
     buf->Retreat(ip_header.HeaderLength());
-    EthArpSend(kEthTypeIp, ip_header, std::move(buf));
+    EthArpSend(kEthTypeIp, ip_header, std::move(buf), pinfo);
   }
 }

@@ -152,10 +152,11 @@ void ebbrt::NetworkManager::Interface::SendIp(std::unique_ptr<MutIOBuf> buf,
   ih.chksum = 0;
   ih.src = src;
   ih.dst = dst;
-  ih.chksum = ih.ComputeChecksum();
+  ih.chksum = 0;
 
-  kassert(ih.ComputeChecksum() == 0);
-
+  // ip checksum offload
+  pinfo.flags |= PacketInfo::kNeedsIpCsum;
+  
   pinfo.csum_start += sizeof(Ipv4Header);
   pinfo.hdr_len += sizeof(Ipv4Header);
 
