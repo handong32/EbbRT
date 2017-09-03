@@ -20,6 +20,7 @@
 #include "SlabAllocator.h"
 
 #define DCA_ENABLE
+#define TX_HEAD_WB
 
 namespace ebbrt {
 
@@ -133,13 +134,21 @@ class IxgbeDriver : public EthernetDevice {
       memset(addr, 0, sz);
       tx_isctx_ = static_cast<bool*>(addr);
 
-      // head wb addr
+#ifdef TX_HEAD_WB
+      // TODO: not sure how much exactly to allocate for head wb addr
       tx_head_ = (uint32_t*) malloc (4 * sizeof(uint32_t));
       memset(tx_head_, 0, 4 * sizeof(uint32_t));
+      txhwbaddr_ = reinterpret_cast<uint64_t>(tx_head_);
+      // txhwbaddr must be byte aligned
+      ebbrt::kbugon((txhwbaddr_ & 0x3) != 0, "txhwbaddr not byte aligned\n");
+      kassert((txhwbaddr_ & 0x3) == 0);
+#else
+      tx_head_ = 0;
+#endif
       
       rxaddr_ = reinterpret_cast<uint64_t>(rx_ring_);
       txaddr_ = reinterpret_cast<uint64_t>(tx_ring_);
-      txhwbaddr_ = reinterpret_cast<uint64_t>(tx_head_);
+      //txhwbaddr_ = reinterpret_cast<uint64_t>(tx_head_);
       rx_size_bytes_ = sizeof(rdesc_legacy_t) * NRXDESCS;
       tx_size_bytes_ = sizeof(tdesc_legacy_t) * NTXDESCS;
 
@@ -150,10 +159,10 @@ class IxgbeDriver : public EthernetDevice {
       ebbrt::kbugon((tx_size_bytes_ & 0x7F) != 0, "tx_size_bytes_ not 128 byte aligned\n");
 
       // txhwbaddr must be byte aligned
-      ebbrt::kbugon((txhwbaddr_ & 0x3) != 0, "txhwbaddr not byte aligned\n");
-      kassert((txhwbaddr_ & 0x3) == 0);
+      //ebbrt::kbugon((txhwbaddr_ & 0x3) != 0, "txhwbaddr not byte aligned\n");
+      //kassert((txhwbaddr_ & 0x3) == 0);
       
-      ebbrt::kprintf("%s: rx_addr = %p, tx_addr = %p, txhwbaddr = %p, rx_size_bytes_ = %p, tx_size_bytes_ = %p\n", __FUNCTION__, rxaddr_, txaddr_, txhwbaddr_, rx_size_bytes_, tx_size_bytes_);
+      //ebbrt::kprintf("%s: rx_addr = %p, tx_addr = %p, txhwbaddr = %p, rx_size_bytes_ = %p, tx_size_bytes_ = %p\n", __FUNCTION__, rxaddr_, txaddr_, txhwbaddr_, rx_size_bytes_, tx_size_bytes_);
     }
 
     size_t rx_head_;
@@ -175,8 +184,11 @@ class IxgbeDriver : public EthernetDevice {
     rdesc_legacy_t* rx_ring_;
     tdesc_legacy_t* tx_ring_;
     bool* tx_isctx_;
+#ifdef TX_HEAD_WB
     uint32_t *tx_head_;
-    //uint8_t *txbuffer;
+#else
+    size_t tx_head_;
+#endif
   };
 
  private:
@@ -325,7 +337,7 @@ class IxgbeDriver : public EthernetDevice {
   uint8_t ReadAutocRestartAn();
   uint8_t ReadEecAutoRd();
   uint32_t ReadEims();
-
+  
   uint32_t ReadRal(uint32_t n);
   uint16_t ReadRah(uint32_t n);
   uint8_t ReadRahAv(uint32_t n);
@@ -374,6 +386,7 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
   explicit IxgbeDriverRep(const IxgbeDriver& root);
   void Run();
   void ReceivePoll();
+  void ReclaimTx();
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo);
   void AddContext(uint8_t idx, uint8_t maclen, 
 		  uint16_t iplen, uint8_t l4len, enum l4_type l4type);
