@@ -19,6 +19,7 @@
 #include "Pfn.h"
 #include "SlabAllocator.h"
 
+//#define RSC_EN
 #define DCA_ENABLE
 #define TX_HEAD_WB
 
@@ -97,16 +98,17 @@ class IxgbeDriver : public EthernetDevice {
   class e10Kq {
   public:    
   e10Kq(size_t idx, Nid nid) : rx_head_(0), rx_tail_(0), rx_size_(NRXDESCS),
-      tx_tail_(0), tx_last_tail_(0), tx_size_(NTXDESCS), idx_(idx) {
+      tx_tail_(0), tx_last_tail_(0), tx_size_(NTXDESCS), idx_(idx), rxflag_(0),
+      rsc_used (false) {
       
       circ_buffer_.reserve(NRXDESCS);
       for(uint32_t k=0; k < NRXDESCS; k ++)
       {
 	circ_buffer_.emplace_back(MakeUniqueIOBuf(RXBUFSZ, true));
       }
+
+      rsc_chain_.reserve(NRXDESCS);
       
-      //txbuffer = (uint8_t*) malloc (sizeof(uint8_t) * 4096);
-	
       // RX
       auto sz = align::Up(sizeof(rdesc_legacy_t) * NRXDESCS, 4096);
       auto order = Fls(sz - 1) - pmem::kPageShift + 1;
@@ -177,13 +179,16 @@ class IxgbeDriver : public EthernetDevice {
     uint64_t rxaddr_;
     uint64_t txaddr_;
     uint64_t txhwbaddr_;
+    uint64_t rxflag_;
     
     std::vector<std::unique_ptr<MutIOBuf>> circ_buffer_;
+    std::vector<std::pair<uint32_t, uint32_t>> rsc_chain_;
     
     //void* addr_;
     rdesc_legacy_t* rx_ring_;
     tdesc_legacy_t* tx_ring_;
     bool* tx_isctx_;
+    bool rsc_used;
 #ifdef TX_HEAD_WB
     uint32_t *tx_head_;
 #else
@@ -324,6 +329,13 @@ class IxgbeDriver : public EthernetDevice {
   void WriteEiac(uint32_t m);
   void WriteEimsn(uint32_t n, uint32_t m);
 
+  void WriteRfctl(uint32_t m);
+
+  void WriteRscctl(uint32_t n, uint32_t m);
+  void WritePsrtype(uint32_t n, uint32_t m);
+
+  void WriteRxcsum(uint32_t m);
+  
   uint8_t ReadRdrxctlDmaidone();
 
   void ReadEicr();
@@ -387,6 +399,7 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
   void Run();
   void ReceivePoll();
   void ReclaimTx();
+  void ReclaimRx();
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo);
   void AddContext(uint8_t idx, uint8_t maclen, 
 		  uint16_t iplen, uint8_t l4len, enum l4_type l4type);
@@ -397,10 +410,12 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
  private:
   uint16_t ReadRdh_1(uint32_t n);
   void WriteRdt_1(uint32_t n, uint32_t m);
+  //uint16_t ReadRdt_1(uint32_t n);
+  //uint16_t ReadRdh_1(uint32_t n);
   void WriteTdt_1(uint32_t n, uint32_t m);
   void WriteEimcn(uint32_t n, uint32_t m);
-  uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr);
-
+  uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_t* rxflag, bool* process_rsc, uint32_t* rnt);
+  
   const IxgbeDriver& root_;
   e10k_queue_t& ixgq_;
   IxgbeDriver::e10Kq& ixgmq_;

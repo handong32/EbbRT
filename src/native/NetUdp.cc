@@ -58,7 +58,7 @@ void ebbrt::NetworkManager::UdpPcb::Receive(
 
 // Receive UDP packet on an interface
 void ebbrt::NetworkManager::Interface::ReceiveUdp(
-    Ipv4Header& ip_header, std::unique_ptr<MutIOBuf> buf) {
+    Ipv4Header& ip_header, std::unique_ptr<MutIOBuf> buf, uint64_t rxflag) {
   auto packet_len = buf->ComputeChainDataLength();
 
   // Ensure we have a header
@@ -79,7 +79,16 @@ void ebbrt::NetworkManager::Interface::ReceiveUdp(
   // if (udp_header.checksum &&
   //     IpPseudoCsum(*buf, ip_header.proto, ip_header.src, ip_header.dst))
   //   return;
+  if(unlikely((rxflag & RXFLAG_L4CS) == 0)) {
+    ebbrt::kprintf("%s RXFLAG_L4CS failed\n");
+    return;
+  }
 
+  if(unlikely((rxflag & RXFLAG_L4CS_VALID) == 0)) {
+    ebbrt::kprintf("%s RXFLAG_L4CS_VALID failed\n");
+    return;
+  }
+  
   auto entry = network_manager->udp_pcbs_.find(ntohs(udp_header.dst_port));
 
   if (!entry)

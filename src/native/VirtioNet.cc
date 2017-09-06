@@ -270,7 +270,7 @@ process:
 
   // }
   b->Advance(sizeof(VirtioNetHeader));
-  root_.itf_.Receive(std::move(b));
+  root_.itf_.Receive(std::move(b), 0);
 }
 
 void ebbrt::VirtioNetRep::FillRxRing() {

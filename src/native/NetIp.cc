@@ -29,7 +29,7 @@ bool ebbrt::NetworkManager::Interface::ItfAddress::isLocalNetwork(
 
 // Receive an Ipv4 packet
 void ebbrt::NetworkManager::Interface::ReceiveIp(
-    EthernetHeader& eth_header, std::unique_ptr<MutIOBuf> buf) {
+    EthernetHeader& eth_header, std::unique_ptr<MutIOBuf> buf, uint64_t rxflag) {
   auto packet_len = buf->ComputeChainDataLength();
 
   //ebbrt::kprintf("%s len->%d\n", __FUNCTION__, packet_len);
@@ -77,8 +77,18 @@ void ebbrt::NetworkManager::Interface::ReceiveIp(
 
   buf->TrimEnd(packet_len - tot_len);
 
-  if (unlikely(ip_header.ComputeChecksum() != 0))
+  if(unlikely((rxflag & RXFLAG_IPCS) == 0)) {
+    ebbrt::kprintf("%s RXFLAG_IPCS failed\n");
     return;
+  }
+
+  if(unlikely((rxflag & RXFLAG_IPCS_VALID) == 0)) {
+    ebbrt::kprintf("%s RXFLAG_IPCS_VALID failed\n");
+    return;
+  }
+  
+  //if (unlikely(ip_header.ComputeChecksum() != 0))
+  //  return;
 
   //ebbrt::kprintf("%s d\n", __FUNCTION__);
 
@@ -115,12 +125,12 @@ void ebbrt::NetworkManager::Interface::ReceiveIp(
   }
   case kIpProtoUDP: {
     //ebbrt::kprintf("%s udp\n", __FUNCTION__);
-    ReceiveUdp(ip_header, std::move(buf));
+    ReceiveUdp(ip_header, std::move(buf), rxflag);
     break;
   }
   case kIpProtoTCP: {
     //ebbrt::kprintf("%s tcp\n", __FUNCTION__);
-    ReceiveTcp(ip_header, std::move(buf));
+    ReceiveTcp(ip_header, std::move(buf), rxflag);
     break;
   }
   }

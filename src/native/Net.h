@@ -25,6 +25,11 @@
 #include "RcuTable.h"
 #include "SharedPoolAllocator.h"
 
+#define RXFLAG_IPCS (1 << 0)
+#define RXFLAG_IPCS_VALID (1 << 1)
+#define RXFLAG_L4CS (1 << 2)
+#define RXFLAG_L4CS_VALID (1 << 3)
+
 namespace ebbrt {
 struct PacketInfo {
   static const constexpr uint8_t kNeedsCsum = 1;
@@ -232,7 +237,7 @@ class NetworkManager : public StaticSharedEbb<NetworkManager> {
     explicit Interface(EthernetDevice& ether_dev)
         : address_(nullptr), ether_dev_(ether_dev) {}
 
-    void Receive(std::unique_ptr<MutIOBuf> buf);
+    void Receive(std::unique_ptr<MutIOBuf> buf, uint64_t rxflag);
     void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo = PacketInfo());
     void SendUdp(UdpPcb& pcb, Ipv4Address addr, uint16_t port,
                  std::unique_ptr<IOBuf> buf);
@@ -262,11 +267,11 @@ class NetworkManager : public StaticSharedEbb<NetworkManager> {
     };
 
     void ReceiveArp(EthernetHeader& eh, std::unique_ptr<MutIOBuf> buf);
-    void ReceiveIp(EthernetHeader& eh, std::unique_ptr<MutIOBuf> buf);
+    void ReceiveIp(EthernetHeader& eh, std::unique_ptr<MutIOBuf> buf, uint64_t rxflag);
     void ReceiveIcmp(EthernetHeader& eh, Ipv4Header& ih,
                      std::unique_ptr<MutIOBuf> buf);
-    void ReceiveUdp(Ipv4Header& ih, std::unique_ptr<MutIOBuf> buf);
-    void ReceiveTcp(const Ipv4Header& ih, std::unique_ptr<MutIOBuf> buf);
+    void ReceiveUdp(Ipv4Header& ih, std::unique_ptr<MutIOBuf> buf, uint64_t rxflag);
+    void ReceiveTcp(const Ipv4Header& ih, std::unique_ptr<MutIOBuf> buf, uint64_t rxflag);
     void ReceiveDhcp(Ipv4Address from_addr, uint16_t from_port,
                      std::unique_ptr<MutIOBuf> buf);
     void EthArpSend(uint16_t proto, const Ipv4Header& ih,

@@ -195,7 +195,7 @@ ebbrt::Ipv4Address ebbrt::NetworkManager::TcpPcb::GetRemoteAddress() {
 
 // Receive a TCP packet on an interface
 void ebbrt::NetworkManager::Interface::ReceiveTcp(
-    const Ipv4Header& ih, std::unique_ptr<MutIOBuf> buf) {
+    const Ipv4Header& ih, std::unique_ptr<MutIOBuf> buf, uint64_t rxflag) {
   auto packet_len = buf->ComputeChainDataLength();
 
   // Ensure we have a header
@@ -214,6 +214,16 @@ void ebbrt::NetworkManager::Interface::ReceiveTcp(
   // if (unlikely(IpPseudoCsum(*buf, ih.proto, ih.src, ih.dst)))
   //   return;
 
+  if(unlikely((rxflag & RXFLAG_L4CS) == 0)) {
+    ebbrt::kprintf("%s RXFLAG_L4CS failed\n");
+    return;
+  }
+
+  if(unlikely((rxflag & RXFLAG_L4CS_VALID) == 0)) {
+    ebbrt::kprintf("%s RXFLAG_L4CS_VALID failed\n");
+    return;
+  }
+  
   auto hdr_len = tcp_header.HdrLen();
   if (unlikely(hdr_len < sizeof(TcpHeader) || hdr_len > packet_len))
     return;
@@ -842,7 +852,7 @@ bool ebbrt::NetworkManager::TcpEntry::Receive(
           return false;
         }
       }
-
+      
       if (flags & kTcpFin) {
         if (unlikely(state == kSynSent)) {
           // Do not process the FIN if the state is CLOSED, LISTEN or SYN-SENT
@@ -853,6 +863,7 @@ bool ebbrt::NetworkManager::TcpEntry::Receive(
         rcv_nxt = info.seqno + info.tcplen;
         if (state == kEstablished || state == kSynReceived) {
           state = kCloseWait;
+	  //ebbrt::kprintf("%s close()\n", __PRETTY_FUNCTION__);
           handler->Close();
         } else if (state == kFinWait1) {
           // We can only be in FinWait1 if our FIN wasn't ACKed so this is a

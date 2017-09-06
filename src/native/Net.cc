@@ -12,7 +12,7 @@ ebbrt::NetworkManager::NewInterface(EthernetDevice& ether_dev) {
   return *interface_;
 }
 
-void ebbrt::NetworkManager::Interface::Receive(std::unique_ptr<MutIOBuf> buf) {
+void ebbrt::NetworkManager::Interface::Receive(std::unique_ptr<MutIOBuf> buf, uint64_t rxflag) {
   auto packet_len = buf->ComputeChainDataLength();
 
   //ebbrt::kprintf("%s packet_len->%lld \n", __PRETTY_FUNCTION__, packet_len);
@@ -64,7 +64,7 @@ void ebbrt::NetworkManager::Interface::Receive(std::unique_ptr<MutIOBuf> buf) {
     // ebbrt::kprintf("\n");
     
     //ebbrt::kprintf("eth type ip\n");
-    ReceiveIp(eth_header, std::move(buf));
+    ReceiveIp(eth_header, std::move(buf), rxflag);
     break;
   }
   case kEthTypeArp: {
