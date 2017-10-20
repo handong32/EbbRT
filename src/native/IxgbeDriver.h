@@ -19,12 +19,13 @@
 #include "Pfn.h"
 #include "SlabAllocator.h"
 
-//#define RSC_EN
+#define RSC_EN
+//#define RSS_EN
 #define DCA_ENABLE
 #define TX_HEAD_WB
 
-namespace ebbrt {
-
+namespace ebbrt {  
+  
 // Queue
 typedef struct {
   rdesc_legacy_t* rx_ring;
@@ -92,14 +93,14 @@ class IxgbeDriver : public EthernetDevice {
   static const constexpr uint32_t NRXDESCS = 256;
   //static const constexpr uint32_t NTXDESCS = 4096;
   //static const constexpr uint32_t NRXDESCS = 4096;
-  static const constexpr uint32_t RXBUFSZ = 2048;
+  static const constexpr uint32_t RXBUFSZ = 4096;
   //static const constexpr uint32_t RXBUFSZ = 16384;
 
   class e10Kq {
   public:    
   e10Kq(size_t idx, Nid nid) : rx_head_(0), rx_tail_(0), rx_size_(NRXDESCS),
       tx_tail_(0), tx_last_tail_(0), tx_size_(NTXDESCS), idx_(idx), rxflag_(0),
-      rsc_used (false) {
+      rsc_used (false), hanc{0} {
       
       circ_buffer_.reserve(NRXDESCS);
       for(uint32_t k=0; k < NRXDESCS; k ++)
@@ -189,6 +190,7 @@ class IxgbeDriver : public EthernetDevice {
     tdesc_legacy_t* tx_ring_;
     bool* tx_isctx_;
     bool rsc_used;
+    int hanc;
 #ifdef TX_HEAD_WB
     uint32_t *tx_head_;
 #else
@@ -201,15 +203,14 @@ class IxgbeDriver : public EthernetDevice {
   NetworkManager::Interface& itf_;
   EthernetAddress mac_addr_;
   
-  void InitStruct();
-  void DeviceInfo();
   void Init();
   void PhyInit();
   void StopDevice();
   void GlobalReset();
   //void SetupQueue(uint32_t i);
   void SetupMultiQueue(uint32_t i);
-
+  void FinishSetup();
+  
   bool SwsmSmbiRead();
   void SwsmSmbiClear();
 
@@ -263,6 +264,7 @@ class IxgbeDriver : public EthernetDevice {
   void WriteMta(uint32_t n, uint32_t m);
   void WriteVfta(uint32_t n, uint32_t m);
   void WritePfvlvf(uint32_t n, uint32_t m);
+  void WritePfvlvfb(uint32_t n, uint32_t m);
   void WriteMpsar(uint32_t n, uint32_t m);
   void WriteFtqf(uint32_t n, uint32_t m);
   void WriteSaqf(uint32_t n, uint32_t m);
@@ -282,6 +284,7 @@ class IxgbeDriver : public EthernetDevice {
   void WriteDcaTxctrlTxdescWbro(uint32_t n, uint32_t m);
   void WriteDcaTxctrl(uint32_t n, uint32_t m);
   void WriteDcaRxctrl(uint32_t n, uint32_t m);
+  void WriteDcaRxctrlClear(uint32_t n, uint32_t m);
   void WriteDcaRxctrl_1(uint32_t n, uint32_t m);
   void WriteDcaRxctrl_2(uint32_t n, uint32_t m);
   void WriteDcaCtrl(uint32_t m);
@@ -297,8 +300,10 @@ class IxgbeDriver : public EthernetDevice {
 
   void WriteSrrctl_1(uint32_t n, uint32_t m);
   // void WriteSrrctl_1_bsizepacket(uint32_t n, uint32_t m);
+  void WriteSrrctlZero(uint32_t n);
   void WriteSrrctl_1_desctype(uint32_t n, uint32_t m);
-
+  void WriteRscdbu(uint32_t m);
+  
   void WriteRdt_1(uint32_t n, uint32_t m);
   void WriteRdh_1(uint32_t n, uint32_t m);
   void WriteRdt_2(uint32_t n, uint32_t m);
@@ -326,6 +331,8 @@ class IxgbeDriver : public EthernetDevice {
   
   void WriteHlreg0(uint32_t m);
   void WriteRdrxctl(uint32_t m);
+  void WriteRdrxctlRSCFRSTSIZE(uint32_t m);
+  
   void WriteEiac(uint32_t m);
   void WriteEimsn(uint32_t n, uint32_t m);
 
@@ -335,7 +342,36 @@ class IxgbeDriver : public EthernetDevice {
   void WritePsrtype(uint32_t n, uint32_t m);
 
   void WriteRxcsum(uint32_t m);
+  void WriteTxpbthresh(uint32_t n, uint32_t m);
+  void WriteMrqc(uint32_t m);
+  void WriteDtxmxszrq(uint32_t m);
+  void WriteMflcn(uint32_t m);
+  void WriteReta(uint32_t n, uint32_t m);
   
+  void WritePsrtypeZero(uint32_t n);
+
+  void WriteRttdcs(uint32_t m);
+  void WriteRttdcsArbdisEn(uint32_t m);
+  void WriteRxpbsize(uint32_t n, uint32_t m);
+  void WriteTxpbsize(uint32_t n, uint32_t m);
+  void WriteTxpbThresh(uint32_t n, uint32_t m);
+  void WriteMtqc(uint32_t m);
+  void WritePfvtctl(uint32_t m);
+  void WriteRtrup2tc(uint32_t m);
+  void WriteRttup2tc(uint32_t m);
+  void WritePfqde(uint32_t m);
+  void WriteRttdt1c(uint32_t m);
+  void WriteRttdt2c(uint32_t n, uint32_t m);
+  void WriteRttpt2c(uint32_t n, uint32_t m);
+  void WriteRtrpt4c(uint32_t n, uint32_t m);
+  void WriteRttpcs(uint32_t m);
+  void WriteRtrpcs(uint32_t m);
+  void WritePfvml2flt(uint32_t n, uint32_t m);
+
+  void WriteMngtxmap(uint32_t m);
+
+  void WriteRxfeccerr0(uint32_t m);
+    
   uint8_t ReadRdrxctlDmaidone();
 
   void ReadEicr();
@@ -361,6 +397,7 @@ class IxgbeDriver : public EthernetDevice {
 
   uint16_t ReadRdh_1(uint32_t n);
   uint16_t ReadTdh(uint32_t n);
+  uint16_t ReadRdt_1(uint32_t n);
 
   // statistics
   uint32_t ReadTpr();
@@ -409,7 +446,9 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
 
  private:
   uint16_t ReadRdh_1(uint32_t n);
+  uint16_t ReadRdt_1(uint32_t n);
   void WriteRdt_1(uint32_t n, uint32_t m);
+  void WriteRdh_1(uint32_t n, uint32_t m);
   //uint16_t ReadRdt_1(uint32_t n);
   //uint16_t ReadRdh_1(uint32_t n);
   void WriteTdt_1(uint32_t n, uint32_t m);
@@ -425,5 +464,7 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
 };  // class IxgbeDriverRep
 
 }  // namespace ebbrt
+
+
 
 #endif  // BAREMETAL_SRC_INCLUDE_EBBRT_IXGBE_DRIVER_H_

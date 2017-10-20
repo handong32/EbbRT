@@ -29,6 +29,8 @@ void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   for(size_t i = 0; i < Cpu::Count(); i++) {
     ixgbe_dev->SetupMultiQueue(i);
   }
+
+  //ixgbe_dev->FinishSetup();
   
   ebbrt::clock::SleepMilli(200);
   ebbrt::kprintf("intel 82599 card initialzed\n");
@@ -159,6 +161,8 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   auto count = buf->CountChainElements();
   bool ip_cksum = false;
   bool tcpudp_cksum = false;
+
+  //ebbrt::kprintf("%s len = %d\n", __PRETTY_FUNCTION__, len);
   
   ebbrt::kbugon(len >= 0xA0 * 1000, "%s packet len bigger than max ether length\n", __FUNCTION__);
   
@@ -259,101 +263,6 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   WriteTdt_1(Cpu::GetMine(), ixgmq_.tx_tail_);
 }
 
-void ebbrt::IxgbeDriver::InitStruct() {
-  struct IxgbeRegs* r = static_cast<struct IxgbeRegs*>(bar0_.GetVaddr());
-
-  ebbrt::kprintf(
-      "0x00000: CTRL        (Device Control)                 0x%08X\n",
-      r->kIxgbeCtrl);
-
-  ebbrt::kprintf(
-      "0x00008: STATUS      (Device Status)                  0x%08X\n",
-      r->kIxgbeStatus);
-}
-
-void ebbrt::IxgbeDriver::DeviceInfo() {
-  uint32_t reg;
-
-  reg = bar0_.Read32(0x042A4);
-  ebbrt::kprintf(
-      "0x042A4: LINKS (Link Status register)                 0x%08X\n"
-      "       Link Status:                                   %s\n"
-      "       Link Speed:                                    %s\n",
-      reg, reg & IXGBE_LINKS_UP ? "up" : "down",
-      reg & IXGBE_LINKS_SPEED ? "10G" : "1G");
-
-  reg = bar0_.Read32(0x05080);
-  ebbrt::kprintf(
-      "0x05080: FCTRL (Filter Control register)              0x%08X\n"
-      "       Broadcast Accept:                              %s\n"
-      "       Unicast Promiscuous:                           %s\n"
-      "       Multicast Promiscuous:                         %s\n"
-      "       Store Bad Packets:                             %s\n",
-      reg, reg & IXGBE_FCTRL_BAM ? "enabled" : "disabled",
-      reg & IXGBE_FCTRL_UPE ? "enabled" : "disabled",
-      reg & IXGBE_FCTRL_MPE ? "enabled" : "disabled",
-      reg & IXGBE_FCTRL_SBP ? "enabled" : "disabled");
-
-  reg = bar0_.Read32(0x04294);
-  ebbrt::kprintf(
-      "0x04294: MFLCN (TabMAC Flow Control register)         0x%08X\n"
-      "       Receive Flow Control Packets:                  %s\n"
-      "       Discard Pause Frames:                          %s\n"
-      "       Pass MAC Control Frames:                       %s\n"
-      "       Receive Priority Flow Control Packets:         %s\n",
-      reg, reg & IXGBE_MFLCN_RFCE ? "enabled" : "disabled",
-      reg & IXGBE_FCTRL_DPF ? "enabled" : "disabled",
-      reg & IXGBE_FCTRL_PMCF ? "enabled" : "disabled",
-      reg & IXGBE_FCTRL_RPFCE ? "enabled" : "disabled");
-
-  reg = bar0_.Read32(0x05088);
-  ebbrt::kprintf(
-      "0x05088: VLNCTRL (VLAN Control register)              0x%08X\n"
-      "       VLAN Mode:                                     %s\n"
-      "       VLAN Filter:                                   %s\n",
-      reg, reg & IXGBE_VLNCTRL_VME ? "enabled" : "disabled",
-      reg & IXGBE_VLNCTRL_VFE ? "enabled" : "disabled");
-
-  reg = bar0_.Read32(0x02100);
-  ebbrt::kprintf(
-      "0x02100: SRRCTL0 (Split and Replic Rx Control 0)      0x%08X\n"
-      "       Receive Buffer Size:                           %uKB\n",
-      reg, (reg & IXGBE_SRRCTL_BSIZEPKT_MASK) <= 0x10
-               ? (reg & IXGBE_SRRCTL_BSIZEPKT_MASK)
-               : 0x10);
-
-  reg = bar0_.Read32(0x03D00);
-  ebbrt::kprintf(
-      "0x03D00: FCCFG (Flow Control Configuration)           0x%08X\n"
-      "       Transmit Flow Control:                         %s\n"
-      "       Priority Flow Control:                         %s\n",
-      reg, reg & IXGBE_FCCFG_TFCE_802_3X ? "enabled" : "disabled",
-      reg & IXGBE_FCCFG_TFCE_PRIORITY ? "enabled" : "disabled");
-
-  reg = bar0_.Read32(0x04250);
-  ebbrt::kprintf(
-      "0x04250: HLREG0 (Highlander Control 0 register)       0x%08X\n"
-      "       Transmit CRC:                                  %s\n"
-      "       Receive CRC Strip:                             %s\n"
-      "       Jumbo Frames:                                  %s\n"
-      "       Pad Short Frames:                              %s\n"
-      "       Loopback:                                      %s\n",
-      reg, reg & IXGBE_HLREG0_TXCRCEN ? "enabled" : "disabled",
-      reg & IXGBE_HLREG0_RXCRCSTRP ? "enabled" : "disabled",
-      reg & IXGBE_HLREG0_JUMBOEN ? "enabled" : "disabled",
-      reg & IXGBE_HLREG0_TXPADEN ? "enabled" : "disabled",
-      reg & IXGBE_HLREG0_LPBK ? "enabled" : "disabled");
-
-  /* General Registers */
-  ebbrt::kprintf(
-      "0x00000: CTRL        (Device Control)                 0x%08X\n",
-      bar0_.Read32(0x0));
-
-  ebbrt::kprintf(
-      "0x00008: STATUS      (Device Status)                  0x%08X\n",
-      bar0_.Read32(0x8));
-}
-
 void ebbrt::IxgbeDriver::WriteRxctrl(uint32_t m) {
   // Disable RXCTRL - 8.2.3.8.10
   bar0_.Write32(0x03000, m);
@@ -375,8 +284,7 @@ void ebbrt::IxgbeDriver::WriteDmatxctl_te(uint32_t m) {
 
 // 8.2.3.5.18 - General Purpose Interrupt Enable — GPIE (0x00898; RW)
 void ebbrt::IxgbeDriver::WriteGpie(uint32_t m) {
-  uint32_t reg;
-  reg = bar0_.Read32(0x00898);
+  auto reg = bar0_.Read32(0x00898);
   bar0_.Write32(0x00898, reg | m);
 }
 
@@ -470,6 +378,16 @@ uint8_t ebbrt::IxgbeDriver::ReadRxdctl_1_enable(uint32_t n) {
 
 void ebbrt::IxgbeDriver::WriteRxdctl_2(uint32_t n, uint32_t m) {
   bar0_.Write32(0x0D028 + (0x40 * n), m);
+}
+
+// 8.2.3.27.14 PF VM L2 Control Register — PFVML2FLT[n] (0x0F000 + 4*n, n=0...63; RW)
+void ebbrt::IxgbeDriver::WritePfvml2flt(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x0F000 + 4*n, m);
+}
+
+// 8.2.3.9.14 Manageability Transmit TC Mapping — MNGTXMAP (0x0CD10; RW)
+void ebbrt::IxgbeDriver::WriteMngtxmap(uint32_t m) {
+  bar0_.Write32(0x0CD10, m);
 }
 
 // 8.2.3.1.1 Device Control Register — CTRL (0x00000 / 0x00004;RW)
@@ -600,6 +518,17 @@ void ebbrt::IxgbeDriver::WritePfvlvf(uint32_t n, uint32_t m) {
   // auto reg = bar0_.Read32(0x0F100 + 4*n);
   // bar0_.Write32(0x0F100 + 4*n, reg | m);
   bar0_.Write32(0x0F100 + 4 * n, m);
+}
+
+//8.2.3.27.16 PF VM VLAN Pool Filter Bitmap — PFVLVFB[n] (0x0F200 + 4*n, n=0...127; RW)
+void ebbrt::IxgbeDriver::WritePfvlvfb(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x0F200 + 4*n, m);
+}
+
+// 8.2.3.7.23 Rx Filter ECC Err Insertion 0 — RXFECCERR0 (0x051B8; RW)
+void ebbrt::IxgbeDriver::WriteRxfeccerr0(uint32_t m) {
+  auto reg = bar0_.Read32(0x051B8);
+  bar0_.Write32(0x051B8, reg | m);
 }
 
 // Checks the MAC's EEPROM to see if it supports a given SFP+ module type, if
@@ -745,9 +674,34 @@ void ebbrt::IxgbeDriver::WriteRttdqsel(uint32_t m) {
   bar0_.Write32(0x04904, reg | m);
 }
 
+// 8.2.3.10.14 DCB Transmit Descriptor Plane T1 Config — RTTDT1C (0x04908; RW)
+void ebbrt::IxgbeDriver::WriteRttdt1c(uint32_t m) {
+  bar0_.Write32(0x04908, m);
+}
+
 // 8.2.3.10.16 DCB Transmit Rate-Scheduler Config — RTTBCNRC (0x04984; RW)
 void ebbrt::IxgbeDriver::WriteRttbcnrc(uint32_t m) {
   bar0_.Write32(0x04984, m);
+}
+
+// 8.2.3.10.9 DCB Transmit Descriptor Plane T2 Config - RTTDT2C[n] (0x04910 + 4*n, n=0...7; RW) DMA-Tx
+void ebbrt::IxgbeDriver::WriteRttdt2c(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x04910 + 4*n, m);
+}
+
+// 8.2.3.10.10 DCB Transmit Packet Plane T2 Config — RTTPT2C[n] (0x0CD20 + 4*n, n=0...7; RW)
+void ebbrt::IxgbeDriver::WriteRttpt2c(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x0CD20 + 4*n, m);
+}
+
+// 8.2.3.10.6 DCB Receive Packet Plane T4 Config — RTRPT4C[n] (0x02140 + 4*n, n=0...7; RW)
+void ebbrt::IxgbeDriver::WriteRtrpt4c(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x02140 + 4*n, m);
+}
+
+// 8.2.3.10.1 DCB Receive Packet Plane Control and Status — RTRPCS (0x02430; RW)
+void ebbrt::IxgbeDriver::WriteRtrpcs(uint32_t m) {
+  bar0_.Write32(0x02430, m);
 }
 
 // 8.2.3.11.2 Tx DCA Control Registers — DCA_TXCTRL[n] (0x0600C + 0x40*n,
@@ -792,10 +746,76 @@ void ebbrt::IxgbeDriver::WritePsrtype(uint32_t n, uint32_t m) {
   bar0_.Write32(0x0EA00 + 0x40 * n, reg | m);
 }
 
+void ebbrt::IxgbeDriver::WritePsrtypeZero(uint32_t n) {
+  bar0_.Write32(0x0EA00 + 0x40 * n, 0x0);
+}
+
+// 8.2.3.7.15 Redirection Table — RETA[n] (0x0EB00 + 4*n, n=0...31/ 0x05C00 + 4*n, n=0...31; RW)
+void ebbrt::IxgbeDriver::WriteReta(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x0EB00 + 4*n, m);
+}
+
 // 8.2.3.7.6 Receive Filter Control Register — RFCTL (0x05008; RW)
 void ebbrt::IxgbeDriver::WriteRfctl(uint32_t m) {
   bar0_.Write32(0x05008, m);
 }
+
+// 8.2.3.9.16 Tx Packet Buffer Threshold —
+// TXPBTHRESH (0x04950 +0x4*n, n=0...7; RW)
+void ebbrt::IxgbeDriver::WriteTxpbthresh(uint32_t n, uint32_t m) {
+  //auto reg = bar0_.Read32(0x04950 + 0x4 * n);
+  //bar0_.Write32(0x04950 + 0x4 * n, reg | m);
+  bar0_.Write32(0x04950 + 0x4 * n, m);
+}
+
+// 8.2.3.7.12 Multiple Receive Queues Command Register- MRQC (0x0EC80 / 0x05818; RW)
+void ebbrt::IxgbeDriver::WriteMrqc(uint32_t m) {
+  auto reg = bar0_.Read32(0x0EC80);
+  bar0_.Write32(0x0EC80, reg | m);
+}
+
+// 8.2.3.9.15 Multiple Transmit Queues Command Register — MTQC (0x08120; RW)
+void ebbrt::IxgbeDriver::WriteMtqc(uint32_t m) {
+  bar0_.Write32(0x08120, m);
+}
+
+// 8.2.3.27.1 VT Control Register — PFVTCTL (0x051B0; RW)
+void ebbrt::IxgbeDriver::WritePfvtctl(uint32_t m) {
+  bar0_.Write32(0x051B0, m);
+}
+
+//8.2.3.10.4 DCB Receive User Priority to Traffic Class — RTRUP2TC (0x03020; RW)
+void ebbrt::IxgbeDriver::WriteRtrup2tc(uint32_t m) {
+  bar0_.Write32(0x03020, m);
+}
+
+// 8.2.3.10.5 DCB Transmit User Priority to Traffic Class — RTTUP2TC (0x0C800; RW)
+void ebbrt::IxgbeDriver::WriteRttup2tc(uint32_t m) {
+  bar0_.Write32(0x0C800, m);
+}
+
+//8.2.3.9.1 DMA Tx TCP Max Allow Size Requests — DTXMXSZRQ (0x08100; RW)
+void ebbrt::IxgbeDriver::WriteDtxmxszrq(uint32_t m) {
+  auto reg = bar0_.Read32(0x08100);
+  bar0_.Write32(0x08100, reg | m);
+}
+
+// 8.2.3.27.9 PF PF Queue Drop Enable Register — PFQDE (0x02F04; RW)
+void ebbrt::IxgbeDriver::WritePfqde(uint32_t m) {
+  bar0_.Write32(0x02F04, m);
+}
+
+// 8.2.3.22.34 MAC Flow Control Register — MFLCN (0x04294; RW)
+void ebbrt::IxgbeDriver::WriteMflcn(uint32_t m) {
+  auto reg = bar0_.Read32(0x04294);
+  bar0_.Write32(0x04294, reg | m);
+}
+
+// 8.2.3.3.7 Flow Control Configuration — FCCFG (0x03D00; RW)
+/*void ebbrt::IxgbeDriver::WriteFccfg(uint32_t m) {
+  auto reg = bar0_.Read32(0x03D00);
+  bar0_.Write32(0x03D00, reg | m);
+  }*/
 
 // void ebbrt::IxgbeDriver::WriteDcaRxctrl_2_RxdataWrro(uint32_t n, uint32_t m);
 
@@ -851,6 +871,10 @@ void ebbrt::IxgbeDriver::WriteSwfwSyncSmBits2(uint32_t m) {
 void ebbrt::IxgbeDriver::WriteDcaRxctrl(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x0100C + 0x40 * n);
   bar0_.Write32(0x0100C + 0x40 * n, reg | m);
+}
+void ebbrt::IxgbeDriver::WriteDcaRxctrlClear(uint32_t n, uint32_t m) {
+  auto reg = bar0_.Read32(0x0100C + 0x40 * n);
+  bar0_.Write32(0x0100C + 0x40 * n, reg & m);
 }
 
 // 8.2.3.11.4 DCA Control Register — DCA_CTRL (0x11074; RW)
@@ -947,6 +971,16 @@ void ebbrt::IxgbeDriver::WriteSrrctl_1(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x01014 + 0x40 * n);
   bar0_.Write32(0x01014 + 0x40 * n, reg | m);
 }
+void ebbrt::IxgbeDriver::WriteSrrctlZero(uint32_t n) {
+  bar0_.Write32(0x01014 + 0x40 * n, 0x0);
+}
+
+//8.2.3.8.12 RSC Data Buffer Control Register — RSCDBU (0x03028; RW)
+void ebbrt::IxgbeDriver::WriteRscdbu(uint32_t m) {
+  auto reg = bar0_.Read32(0x03028);
+  bar0_.Write32(0x03028, reg | m);
+}
+
 /*void ebbrt::IxgbeDriver::WriteSrrctl_1_bsizepacket(uint32_t n, uint32_t m) {
     auto reg = bar0_.Read32(0x01014 + 0x40*n);
     bar0_.Write32(0x01014 + 0x40*n, reg | m);
@@ -962,9 +996,30 @@ void ebbrt::IxgbeDriver::WriteRdrxctl(uint32_t m) {
   auto reg = bar0_.Read32(0x02F00);
   bar0_.Write32(0x02F00, reg | m);
 }
+
+void ebbrt::IxgbeDriver::WriteRdrxctlRSCFRSTSIZE(uint32_t m) {
+  auto reg = bar0_.Read32(0x02F00);
+  bar0_.Write32(0x02F00, reg & m);
+}
+  
 uint8_t ebbrt::IxgbeDriver::ReadRdrxctlDmaidone() {
   auto reg = bar0_.Read32(0x02F00);
   return (reg >> 3) & 0x1;
+}
+
+// 8.2.3.8.9 Receive Packet Buffer Size — RXPBSIZE[n] (0x03C00 + 4*n, n=0...7; RW)
+void ebbrt::IxgbeDriver::WriteRxpbsize(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x03C00 + 4*n, m);
+}
+
+// 8.2.3.9.13 Transmit Packet Buffer Size — TXPBSIZE[n] (0x0CC00 + 0x4*n, n=0...7; RW)
+void ebbrt::IxgbeDriver::WriteTxpbsize(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x0CC00 + 0x4*n, m);
+}
+
+// 8.2.3.9.16 Tx Packet Buffer Threshold — TXPBTHRESH (0x04950+0x4*n, n=0...7; RW)
+void ebbrt::IxgbeDriver::WriteTxpbThresh(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x04950+0x4*n, m);
 }
 
 // 8.2.3.22.8 MAC Core Control 0 Register — HLREG0 (0x04240; RW)
@@ -987,8 +1042,17 @@ void ebbrt::IxgbeDriver::WriteRdt_2(uint32_t n, uint32_t m) {
 void ebbrt::IxgbeDriver::WriteRdh_1(uint32_t n, uint32_t m) {
   bar0_.Write32(0x01010 + 0x40 * n, m);
 }
+void ebbrt::IxgbeDriverRep::WriteRdh_1(uint32_t n, uint32_t m) {
+  root_.bar0_.Write32(0x01010 + 0x40 * n, m);
+}
+
 uint16_t ebbrt::IxgbeDriver::ReadRdh_1(uint32_t n) {
   auto reg = bar0_.Read32(0x01010 + 0x40 * n);
+  return reg & 0xFFFF;
+}
+
+uint16_t ebbrt::IxgbeDriver::ReadRdt_1(uint32_t n) {
+  auto reg = bar0_.Read32(0x01018 + 0x40 * n);
   return reg & 0xFFFF;
 }
 
@@ -1039,6 +1103,22 @@ void ebbrt::IxgbeDriver::WriteIvarAllocval3(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x00900 + 4 * n);
   bar0_.Write32(0x00900 + 4 * n, reg | m);
 }
+
+// 8.2.3.10.2 DCB Transmit Descriptor Plane Control and Status — RTTDCS (0x04900; RW) DMA-Tx
+void ebbrt::IxgbeDriver::WriteRttdcs(uint32_t m) {
+  auto reg = bar0_.Read32(0x04900);
+  bar0_.Write32(0x04900, reg | m);
+}
+void ebbrt::IxgbeDriver::WriteRttdcsArbdisEn(uint32_t m) {
+  auto reg = bar0_.Read32(0x04900);
+  bar0_.Write32(0x04900, reg & m);
+}
+
+// 8.2.3.10.3 DCB Transmit Packet Plane Control and Status- RTTPCS (0x0CD00; RW)
+void ebbrt::IxgbeDriver::WriteRttpcs(uint32_t m) {
+  bar0_.Write32(0x0CD00, m);
+}
+
 
 // 8.2.3.12.5 Security Rx Control — SECRXCTRL (0x08D00; RW)
 void ebbrt::IxgbeDriver::WriteSecrxctrl_Rx_Dis(uint32_t m) {
@@ -1205,10 +1285,7 @@ void ebbrt::IxgbeDriver::Init() {
   bar0_.Map();  // allocate virtual memory
   ebbrt::clock::SleepMilli(200);
   ebbrt::kprintf("Sleep 200 ms\n");
-
-  // DeviceInfo();
-  // InitStruct();
-
+  
   StopDevice();
   GlobalReset();
   ebbrt::clock::SleepMilli(50);
@@ -1239,10 +1316,9 @@ void ebbrt::IxgbeDriver::Init() {
 
   // Initialize Phy
   PhyInit();
-
+  
   // Wait for EEPROM auto read
-  while (ReadEecAutoRd() == 0)
-    ;  // TODO: Timeout
+  while (ReadEecAutoRd() == 0) {};  // TODO: Timeout
   ebbrt::kprintf("EEPROM auto read done\n");
 
   ebbrt::clock::SleepMilli(200);
@@ -1258,16 +1334,14 @@ void ebbrt::IxgbeDriver::Init() {
       static_cast<uint8_t>(mac_addr_[4]), static_cast<uint8_t>(mac_addr_[5]));
 
   // Wait for DMA initialization
-  while (ReadRdrxctlDmaidone() == 0)
-  ;  // TODO: Timeout
+  while (ReadRdrxctlDmaidone() == 0) {};  // TODO: Timeout
 
   // Wait for link to come up
-  while (!ReadLinksLinkUp())
-    ;  // TODO: timeout
+  while (!ReadLinksLinkUp()) {};  // TODO: timeout
   ebbrt::kprintf("Link is up\n");
   ebbrt::clock::SleepMilli(50);
 
-  // Initialize interrupts
+  // clears on read
   WriteEicr(0xFFFFFFFF);
 
   /* setup msix */
@@ -1282,9 +1356,9 @@ void ebbrt::IxgbeDriver::Init() {
   WriteGpie(0x1 << 30);  // EIAME
 
 #ifdef RSC_EN
-  //TODO: RSC delay value, just a guess atm
-  WriteGpie(0x2 << 11);
-  WriteRfctl(0x0);
+  //TODO: RSC delay value, just a guess at (1 + 1) * 4us = 8 us
+  // Recommended value based on 7.3.2.1.1
+  WriteGpie(0x1 << 11); 
 #endif
   
   /* FreeBSD:
@@ -1314,22 +1388,17 @@ void ebbrt::IxgbeDriver::Init() {
   }
 
   for (auto i = 0; i < 64; i++) {
-    WritePfvlvf(i, 0x1 << 31);  // VI_En bit 31
+    //WritePfvlvf(i, 0x1 << 31);  // VI_En bit 31
+    WritePfvlvf(i, 0x0);
+    WritePfvlvfb(i, 0x0);
+    //WritePsrtypeZero(0x0);
   }
 
-  for (auto i = 0; i < 256; i++) {
-    WriteMpsar(i, 0x0);
-  }
-
+  // PF Unicast Table Array
   for (auto i = 0; i < 128; i++) {
-    WriteFtqf(i, 0x0);
-    WriteSaqf(i, 0x0);
-    WriteDaqf(i, 0x0);
-    WriteSdpqf(i, 0x0);
+    WritePfuta(i, 0x0);
   }
-
-  // FreeBSD if_ix.c - ixgbe_initialize_receive_units - Enable broadcast accept
-  WriteFctrl(0x1 << 10);  // Set BAM = 1
+  
 
   // not sure why initing these tables?
   for (auto i = 0; i < 128; i++) {
@@ -1339,51 +1408,139 @@ void ebbrt::IxgbeDriver::Init() {
     }
   }
 
-  // PF Unicast Table Array
-  for (auto i = 0; i < 128; i++) {
-    WritePfuta(i, 0x0);
+  //enable ECC Reporting TODO - causes interrupts to be broken??
+  //WriteRxfeccerr0(0x1 << 9);
+
+  /**** Initialize RX filters ****/
+  // FreeBSD if_ix.c - ixgbe_initialize_receive_units - Enable broadcast accept
+  WriteFctrl(0x1 << 10);  // Set BAM = 1
+
+  // TODO VLNCTRL 
+  WriteMcstctrl(0x0);
+
+#ifndef RSC_EN
+  WriteRxcsum(0x1 << 12); //IP payload checksum enable
+#endif
+  // TODO RQTC
+
+#ifdef RSC_EN
+  WriteRfctl(0x0);
+#else
+  WriteRfctl(0x1 << 5);
+#endif
+
+  for (auto i = 0; i < 256; i++) {
+    WriteMpsar(i, 0x0);
   }
 
-  // Multicast Control Register
-  // WriteMcstctrl(0x1 << 2);
-  WriteMcstctrl(~(0x1 << 2));  // disable MFE
+  // TODO RSSRK
+
+  for(auto i = 0; i < 32; i++) {
+    WriteReta(i, 0x0);
+  }
+  
+  for (auto i = 0; i < 128; i++) {
+    WriteFtqf(i, 0x0);
+    WriteSaqf(i, 0x0);
+    WriteDaqf(i, 0x0);
+    WriteSdpqf(i, 0x0);
+  }
+
+  // TODO SYNQF
+  // TODO ETQF
+  // TODO ETQS
 
   // Make sure RX CRC strip enabled in HLREG0 and RDRXCTL
-  WriteHlreg0(0x1 << 1);  // CRCStrip
+  WriteRdrxctlRSCFRSTSIZE(~(0x1F << 17)); // s/w set to 0
   WriteRdrxctl(0x1 << 1);  // CRCStrip
+  WriteHlreg0(0x1 << 1);  // CRCStrip
+  WriteRdrxctl(0x1 << 25); // RSCACKC s/w set to 1
+  WriteRdrxctl(0x1 << 26); // FCOE_WRFIX s/w set to 1
+  //TODO RSCDBU
 
-  // from freeBSD/arrakis - ixgbe_common.c - ixgbe_start_hw_gen2
-  // clear the rate limiters
-  for (auto i = 0; i < 128; i++) {
-    WriteRttdqsel(i);
-    WriteRttbcnrc(0x0);
+  /***** END RX FILTER *****/
+
+  // Configure buffers etc. according to specification
+  // Section 4.6.11.3.4 (no DCB, no virtualization)
+
+  /* Transmit Init: Set RTTDCS.ARBDIS to 1b.
+   * Program DTXMXSZRQ, TXPBSIZE, TXPBTHRESH, MTQC, and MNGTXMAP, according
+   * to the DCB and virtualization modes (see Section 4.6.11.3).
+   * Clear RTTDCS.ARBDIS to 0b.
+   */
+  WriteRttdcs(0x1 << 6);
+  WriteDtxmxszrq(0xFFF);
+  WriteTxpbsize(0, 0xA0 << 10);
+  WriteTxpbThresh(0, 0xA0);
+  for(auto i = 1; i < 8; i ++) {
+    WriteTxpbsize(i, 0x0);
+    WriteTxpbThresh(i, 0x0);
   }
+  WriteMtqc(0x0);
+  WriteMngtxmap(0x0);
+  WriteRttdcsArbdisEn(~(0x1 << 6));
+  
+  /* Receive Init: Program RXPBSIZE, MRQC, PFQDE, RTRUP2TC, MFLCN.RPFCE, 
+   * and MFLCN.RFCE according to the DCB and virtualization modes
+   */
+  WriteRxpbsize(0, 0x200 << 10);
+  for(auto i = 1; i < 8; i ++) {
+    WriteRxpbsize(i, 0x0);
+  }
+  WriteMrqc(0x0);
+  WritePfqde(0x0);
+  WriteRtrup2tc(0x0);
+  WriteMflcn(0x0 << 2);
+  WriteMflcn(0x1 << 3);
+  //end DCB off, VT off
 
+  // TODO Enable Jumbo Packets
+  
   // disable relaxed ordering
   for (auto i = 0; i < 128; i++) {
     WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // Txdesc_Wbro
 
     if (i < 64) {
-      WriteDcaRxctrl_1(
-          i, ~(0x1 << 15));  // Rx split header relax order enable, bit 15
-      WriteDcaRxctrl_1(
-          i, ~(0x1 << 13));  // Rx data Write Relax Order Enable, bit 13
+      WriteDcaRxctrl_1(i, ~(0x1 << 15));  // Rx split header relax order enable, bit 15
+      WriteDcaRxctrl_1(i, ~(0x1 << 13));  // Rx data Write Relax Order Enable, bit 13
     } else {
-      WriteDcaRxctrl_1(
-          i - 64, ~(0x1 << 15));  // Rx split header relax order enable, bit 15
-      WriteDcaRxctrl_1(
-          i - 64, ~(0x1 << 13));  // Rx data Write Relax Order Enable, bit 13
+      WriteDcaRxctrl_2(i - 64, ~(0x1 << 15));  // Rx split header relax order enable, bit 15
+      WriteDcaRxctrl_2(i - 64, ~(0x1 << 13));  // Rx data Write Relax Order Enable, bit 13
     }
   }
+
+  //disable all queues
+  /*for(auto i = 0; i < 128; i ++) {
+    WriteTxdctl(i, 0x0);
+    if(i < 64) {
+      WriteRxdctl_1(i, 0x0);
+    }
+    else {
+      WriteRxdctl_2(i - 64, 0x0);
+    }
+  }
+
+  for(auto i = 0; i < 64; i ++)
+  {
+    WritePfvml2flt(i, 0x0);
+    }*/
+  
 
 #ifdef DCA_ENABLE
   //DCA_MODE = DCA 1.0
   WriteDcaCtrl(0x1 << 1);
 #endif
+}
 
-#ifndef RSC_EN
-  WriteRxcsum(0x1 << 12); //IP payload checksum enable
-#endif
+void ebbrt::IxgbeDriver::FinishSetup()
+{
+  // No snoop disable from FreeBSD ??
+  WriteCtrlExt(0x1 << 16);  // NS_DIS
+  for(size_t i = 0; i < Cpu::Count(); i++)
+  {
+    WriteDcaRxctrlClear(i, ~(0x1 << 12));// clear bit 12
+  }
+  WriteEims(0xFFFF);
 }
 
 void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
@@ -1392,7 +1549,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
       event_manager->AllocateVector([this]() { ebb_->ReceivePoll(); });
   }
   
-  //ebbrt::kprintf("%s for Core %d, rcv_vector = 0x%X\n", __FUNCTION__, i, rcv_vector);
+  ebbrt::kprintf("*** %s for Core %d, rcv_vector = 0x%X\n", __FUNCTION__, i, rcv_vector);
 
   // allocate memory for descriptor rings
   ixgmq[i].reset(new e10Kq(i, Cpu::GetMyNode()));
@@ -1402,14 +1559,15 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   
   // update register RDBAL, RDBAH with receive descriptor base address
   WriteRdbal_1(i, ixgmq[i]->rxaddr_ & 0xFFFFFFFF);
-  //WriteRdbah_1(i, (ixgmq[i]->rxaddr_ >> 32) & 0xFFFFFFFF);
+  WriteRdbah_1(i, (ixgmq[i]->rxaddr_ >> 32) & 0xFFFFFFFF);
 
   // set to number of bytes allocated for receive descriptor ring
   WriteRdlen_1(i, ixgmq[i]->rx_size_bytes_);
 
   // program srrctl register
+  WriteSrrctlZero(i);
   WriteSrrctl_1(i, RXBUFSZ / 1024);  // bsizepacket
-  //WriteSrrctl_1(i, (128 / 64) << 8);  // bsizeheader 
+  WriteSrrctl_1(i, (128 / 64) << 8);  // bsizeheader 
   
   //TODO headsplit adv
 #ifdef RSC_EN
@@ -1419,24 +1577,24 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   WriteSrrctl_1(i, ~(0x7 << 25));  // desctype legacy
 #endif
   
- WriteSrrctl_1(i, 0x1 << 28);  // Drop_En
+  WriteSrrctl_1(i, 0x1 << 28);  // Drop_En
   
 #ifdef RSC_EN
   //RSC set up
   WriteRscctl(i, 0x3 << 2); // MAXDESC
   WriteRscctl(i, 0x1); //RSCEN
+  WritePsrtypeZero(i);
   WritePsrtype(i, 0x1 << 4); // Split received TCP packets after TCP header.
 #endif
-  
-  // Set Enable bit in receive queue
-  WriteRxdctl_1_enable(i, 0x1 << 25);
-  // till set
-  // TODO: Timeout
-  while (ReadRxdctl_1_enable(i) == 0);
 
   // Set head and tail pointers
   WriteRdt_1(i, 0x0);
   WriteRdh_1(i, 0x0);
+  
+  // Set Enable bit in receive queue
+  WriteRxdctl_1_enable(i, 0x1 << 25);
+  // TODO: Timeout
+  while (ReadRxdctl_1_enable(i) == 0);
   
   // setup RX interrupts for queue i
   dev_.SetMsixEntry(i, rcv_vector, ebbrt::Cpu::GetByIndex(i)->apic_id());
@@ -1456,8 +1614,15 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
     //ebbrt::kprintf("IVAR %d, INT_Alloc 0x%X, INT_Alloc_val 0x%X\n", qn, i << 16, 0x1 << 23);
   }
   
-  // no interrupt throttling for msix index i
-  WriteEitr(i, 0x0);
+  // must be greater than rsc delay
+  WriteEitr(i, 0x80 << 3); // 7 * 2us = 14 us
+  //WriteEitr(i, 0x0);
+  /*if(i < 24 ) {
+    WriteEitr(i, 0x7 << 3);
+  }
+  else {
+    WriteEitr(i - 24, 0x7 << 3);
+    }*/
   
   // 7.3.1.4 - Note that there are no EIAC(1)...EIAC(2) registers.
   // The hardware setting for interrupts 16...63 is always auto clear.
@@ -1496,7 +1661,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
     tmp->packet_buffer = rxphys;
     //TODO only use this if enabling header splitting?
     tmp->header_buffer = 0;
-    //ebbrt::kprintf("%s tail=%d %p %p\n", __FUNCTION__, tail, tmp->packet_buffer, tmp->header_buffer);
+    ebbrt::kprintf("RSC %s tail=%d %p %p\n", __FUNCTION__, tail, tmp->packet_buffer, tmp->header_buffer);
 #else
     ixgmq[i]->rx_ring_[tail].buffer_address = rxphys;
     //ebbrt::kprintf("%s %d %p\n", __FUNCTION__, j, ixgmq_.rx_ring_[tail].buffer_address);
@@ -1529,10 +1694,6 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   // length must also be 128 byte aligned
   WriteTdlen(i, ixgmq[i]->tx_size_bytes_);
 
-   //Head_WB_En = 1
-  WriteTdwbal(i, (ixgmq[i]->txhwbaddr_ & 0xFFFFFFFF) | 0x1);
-  WriteTdwbah(i, (ixgmq[i]->txhwbaddr_ >> 32) & 0xFFFFFFFF);
-
 #ifdef TX_HEAD_WB
   //Head_WB_En = 1
   WriteTdwbal(i, (ixgmq[i]->txhwbaddr_ & 0xFFFFFFFF) | 0x1);
@@ -1547,10 +1708,10 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
 
   // poll until set, TODO: Timeout
   while (ReadTxdctl_enable(i) == 0);
-  //ebbrt::kprintf("TX queue enabled\n");
+  ebbrt::kprintf("TX queue enabled\n");
   
   // TODO: set up dca txctrl FreeBSD?
-  //WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
+  WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
 }
 
 // IxgbeDriverRep
@@ -1577,30 +1738,16 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_
 #ifdef RSC_EN
   rdesc_adv_wb_t *tmp;
   tmp = reinterpret_cast<rdesc_adv_wb_t *>(&(ixgmq_.rx_ring_[ixgmq_.rx_head_]));
+  //int c = static_cast<int>(Cpu::GetMine());
   
   std::atomic_thread_fence(std::memory_order_seq_cst);
   
   if(!(tmp->dd)) {
-      return 1; //nothing has been received
+    return 1;
   }
-
-
-  //std::atomic_thread_fence(std::memory_order_seq_cst);
 
   auto rsccnt = tmp->rsccnt;
-
-  //ebbrt::kprintf("eop=%d rsc_used=%d process_rsc=%d ", tmp->eop, ixgmq_.rsc_used, *process_rsc);
-
-  /*uint8_t* c = reinterpret_cast<uint8_t*>(ixgmq_.circ_buffer_[ixgmq_.rx_head_]->MutData());
-  ebbrt::kprintf("rx_head_=%d addr = %p\n", ixgmq_.rx_head_, c);
-  for(size_t i = 0; i < 60; i++)
-  {
-    ebbrt::kprintf("%02X ", c[i]);
-  }
-  ebbrt::kprintf("\n");*/
   
-  ebbrt::kprintf("Core = %d rx_head = %d rsccnt = %d pkt_len = %d addr[0] = %p addr[1] = %p\n", c, ixgmq_.rx_head_, rsccnt, tmp->pkt_len, tmp->raw[0], tmp->raw[1]);
-
   // not RSC, handled normally
   if(rsccnt == 0 && tmp->eop) {
     *len = tmp->pkt_len;
@@ -1621,34 +1768,33 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_
 	*rxflag |= RXFLAG_IPCS_VALID;
       }
     }
+
+    //ebbrt::kprintf("handled -> NORMAL CASE rsccnt = %d rx_head_ = %d addr[0] = %p addr[1] = %p packet_len = %d rsc_used=%d\n", rsccnt, ixgmq_.rx_head_, ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0], ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[1], tmp->pkt_len, ixgmq_.rsc_used);
+
     /*uint8_t* c = reinterpret_cast<uint8_t*>(ixgmq_.circ_buffer_[ixgmq_.rx_head_]->MutData());
     ebbrt::kprintf("addr = %p\n", c);
-    for(size_t i = 0; i < 60; i++)
+    for(size_t i = 0; i < tmp->pkt_len; i++)
     {
       ebbrt::kprintf("%02X ", c[i]);
     }
     ebbrt::kprintf("\n");*/
-
+    
     // reset descriptor
     ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0] = 0;
     ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[1] = 0;
 
+    
     // bump head ptr
     ixgmq_.rx_head_ = (ixgmq_.rx_head_ + 1) % ixgmq_.rx_size_;
 
+    
     return 0;
   }
   // not sure what case this is, no context started, eop is set but rsccnt > 0
   else if(rsccnt > 0 && tmp->eop && !(ixgmq_.rsc_used)) {
     kbugon(tmp->next_descriptor_ptr > ixgmq_.rx_size_, "RSC: NEXTP > RX_SIZE\n");
-    kbugon(rsccnt > 2, "RSC: rsccnt > 2\n");
-
-    //ebbrt::kprintf("special case\n");
-    /*ebbrt::kprintf("rx_head_ = %d addr[0] = %p addr[1] = %p\n", ixgmq_.rx_head_+1, ixgmq_.rx_ring_[ixgmq_.rx_head_+1].raw[0], ixgmq_.rx_ring_[ixgmq_.rx_head_+1].raw[1]);
-    ebbrt::kprintf("rx_head_ = %d addr[0] = %p addr[1] = %p\n", ixgmq_.rx_head_+2, ixgmq_.rx_ring_[ixgmq_.rx_head_+2].raw[0], ixgmq_.rx_ring_[ixgmq_.rx_head_+2].raw[1]);
-    ebbrt::kprintf("rx_head_ = %d addr[0] = %p addr[1] = %p\n", ixgmq_.rx_head_+3, ixgmq_.rx_ring_[ixgmq_.rx_head_+3].raw[0], ixgmq_.rx_ring_[ixgmq_.rx_head_+3].raw[1]);
-    ebbrt::kprintf("rx_head_ = %d addr[0] = %p addr[1] = %p\n", ixgmq_.rx_head_+4, ixgmq_.rx_ring_[ixgmq_.rx_head_+4].raw[0], ixgmq_.rx_ring_[ixgmq_.rx_head_+4].raw[1]);*/
-
+    //kbugon(rsccnt > 2, "RSC: rsccnt > 2\n");
+    
     *len = tmp->pkt_len;
 
     /* set rx flags */
@@ -1668,20 +1814,22 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_
       }
     }
 
+    //ebbrt::kprintf("handled -> *** WEIRD CASE *** rsccnt > 0 but eop set rsccnt = %d rx_head_ = %d addr[0] = %p addr[1] = %p packet_len = %d next_descriptor = %d\n", rsccnt, ixgmq_.rx_head_, ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0], ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[1], tmp->pkt_len, tmp->next_descriptor_ptr);
+    
     // reset descriptor
     ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0] = 0;
     ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[1] = 0;
 
+    /*uint8_t* c = reinterpret_cast<uint8_t*>(ixgmq_.circ_buffer_[ixgmq_.rx_head_]->MutData());
+    ebbrt::kprintf("rx_head_=%d addr=%p\n", ixgmq_.rx_head_, c);
+    for(size_t j = 0; j < 100; j++)
+    {
+      ebbrt::kprintf("%02X ", c[j]);
+    }
+    ebbrt::kprintf("\n\n");*/
+    
     // bump head ptr
     ixgmq_.rx_head_ = (ixgmq_.rx_head_ + 1) % ixgmq_.rx_size_;
-
-    /*if(ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[1] == 0x0) {
-     *rnt = (rsccnt-1);
-      for(size_t k = 0; k < (rsccnt-1); k++) {
-      // bump head ptr
-      ixgmq_.rx_head_ = (ixgmq_.rx_head_ + 1) % ixgmq_.rx_size_;
-      }
-      }*/
 
     return 0;
   }
@@ -1697,6 +1845,8 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_
     }
     ebbrt::kprintf("\n");*/
 
+    //ebbrt::kprintf("\nhandled -> NEW RSC CONTEXT rsccnt = %d rx_head_ = %d addr[0] = %p addr[1] = %p packet_len = %d next_descriptor = %d\n", rsccnt, ixgmq_.rx_head_, ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0], ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[1], tmp->pkt_len, tmp->next_descriptor_ptr);
+    
     ixgmq_.rsc_used = true;
     //ixgmq_.rsc_chain_.emplace_back(ixgmq_.rx_head_);
     
@@ -1715,6 +1865,7 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_
     
     ixgmq_.rsc_chain_.emplace_back(std::make_pair(ixgmq_.rx_head_, static_cast<uint32_t>(tmp->pkt_len)));
     
+    //ebbrt::kprintf("handled -> APPEND EXISTING RSC CONTEXT rsccnt = %d rx_head_ = %d addr[0] = %p addr[1] = %p packet_len = %d next_descriptor = %d\n", rsccnt, ixgmq_.rx_head_, ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0], ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[1], tmp->pkt_len, tmp->next_descriptor_ptr);
     
     //ixgmq_.rsc_chain_.emplace_back(static_cast<uint32_t>(tmp->next_descriptor_ptr));
 
@@ -1752,16 +1903,9 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_
       }
     }
 
-    ixgmq_.rsc_chain_.emplace_back(std::make_pair(ixgmq_.rx_head_, static_cast<uint32_t>(tmp->pkt_len)));
+    //ebbrt::kprintf("handled -> LAST RSC CONTEXT rsccnt = %d rx_head_ = %d addr[0] = %p addr[1] = %p packet_len = %d\n", rsccnt, ixgmq_.rx_head_, ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0], ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[1], tmp->pkt_len);
     
-    //ebbrt::kprintf("head = %d tail = %d\n", ReadRdh_1(Cpu::GetMine()), ReadRdt_1(Cpu::GetMine()));
-    /*uint8_t* c = reinterpret_cast<uint8_t*>(ixgmq_.circ_buffer_[ixgmq_.rx_head_]->MutData());
-    ebbrt::kprintf("addr = %p\n", c);
-    for(size_t i = 0; i < 60; i++)
-    {
-      ebbrt::kprintf("%02X ", c[i]);
-    }
-    ebbrt::kprintf("\n");*/
+    ixgmq_.rsc_chain_.emplace_back(std::make_pair(ixgmq_.rx_head_, static_cast<uint32_t>(tmp->pkt_len)));
 
     // bump head ptr
     ixgmq_.rx_head_ = (ixgmq_.rx_head_ + 1) % ixgmq_.rx_size_;
@@ -1779,10 +1923,9 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_
 #else
   //rdesc_legacy_t *tmp;
   //tmp = reinterpret_cast<rdesc_legacy_t *>(&(ixgmq_.rx_ring_[ixgmq_.rx_head_]));
+  int c = static_cast<int>(Cpu::GetMine());
   rdesc_legacy_t tmp;
   tmp = ixgmq_.rx_ring_[ixgmq_.rx_head_];
-
-  
   
   if (tmp.dd && tmp.eop) {
     *len = tmp.length;
@@ -1806,7 +1949,7 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_
     }
 
     //auto test = ixgmq_.circ_buffer_[ixgmq_.rx_head_]->Data();
-    //ebbrt::kprintf("Core = %d rx_head = %d pkt_len = %d addr[0] = %p addr[1] = %p\n", c, ixgmq_.rx_head_, tmp.length, tmp.raw[0], tmp.raw[1]);
+    ebbrt::kprintf("Core = %d rx_head = %d pkt_len = %d addr[0] = %p addr[1] = %p\n", c, ixgmq_.rx_head_, tmp.length, tmp.raw[0], tmp.raw[1]);
 
     // reset descriptor
     ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0] = 0;
@@ -1830,14 +1973,14 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   uint32_t count;
   uint32_t rnt;
 
-  int c = static_cast<int>(Cpu::GetMine());
-
+  //int c = static_cast<int>(Cpu::GetMine());
+  process_rsc = false;
+  
 retry:
-  ebbrt::kprintf("%s for Core %d\n", __FUNCTION__, c);
+  //ebbrt::kprintf("%s for Core %d\n", __FUNCTION__, c);
   rxflag = 0;
   count = 0;
   rnt = 0;
-  process_rsc = false;
 
   //TODO use the receive checksum offloading in Section 7.1.11
   // get address of buffer with data
@@ -1848,9 +1991,13 @@ retry:
       count++;
       
       auto n = ixgmq_.rsc_chain_[0].first;
+      auto rsclen = 0;
+	
       //TODO hack - need to set actual length of data else there'll be 0's attached
       ixgmq_.circ_buffer_[n]->SetLength(ixgmq_.rsc_chain_[0].second);
 
+      rsclen += ixgmq_.rsc_chain_[0].second;
+      
       // TODO - maybe find better way to rewrite this
       auto b = std::move(ixgmq_.circ_buffer_[n]);
       
@@ -1860,24 +2007,24 @@ retry:
 	auto n = ixgmq_.rsc_chain_[x].first;
 	//TODO hack - need to set actual length of data
 	ixgmq_.circ_buffer_[n]->SetLength(ixgmq_.rsc_chain_[x].second);
+	rsclen += ixgmq_.rsc_chain_[x].second;
 	b->PrependChain(std::move(ixgmq_.circ_buffer_[n]));
       }
-      
+
+      //ebbrt::kprintf("RSC pkt_len = %d\n\n", rsclen);
       ReclaimRx();
       
+      //ebbrt::kprintf("root_.itf_.Receive\n");
       root_.itf_.Receive(std::move(b), rxflag);
     }
     else
     {
       // done with buffer addr above, now to reuse it
       auto tail = ixgmq_.rx_tail_;
-      //ixgmq_.rx_ring_[tail].buffer_address = bAddr;
-
+      
       // bump tail ptr
       ixgmq_.rx_tail_ = (tail + 1) % ixgmq_.rx_size_;
-
-      //ebbrt::kprintf("tail = %d rx_tail = %d\n", tail, ixgmq_.rx_tail_);
-      
+ 
       count++;
 
       if (count > 0) {
@@ -1903,6 +2050,8 @@ retry:
 
 	ixgmq_.rx_ring_[tail].buffer_address = rxphys;
 	//ebbrt::kprintf("\t normal packet len = %d \n\n", len);
+	//ebbrt::kprintf("root_.itf_.Receive\n");
+	
 	root_.itf_.Receive(std::move(b), rxflag);
 	//ebbrt::kprintf("head = %d tail = %d\n\n", ReadRdh_1(0), ReadRdt_1(0));
       }
@@ -1926,7 +2075,7 @@ retry:
 ebbrt::IxgbeDriverRep::IxgbeDriverRep(const IxgbeDriver& root)
   : root_(root), ixgq_(root_.GetQueue()), ixgmq_(root.GetMultiQueue(Cpu::GetMine())),
     receive_callback_([this]() { ReceivePoll(); }) {
-  ebbrt::kprintf("%s for Core %d\n", __FUNCTION__, Cpu::GetMine());
+  //ebbrt::kprintf("%s for Core %d\n", __FUNCTION__, Cpu::GetMine());
   this->ReceivePoll();
 }
 
@@ -1934,6 +2083,11 @@ uint16_t ebbrt::IxgbeDriverRep::ReadRdh_1(uint32_t n) {
   auto reg = root_.bar0_.Read32(0x01010 + 0x40 * n);
   return reg & 0xFFFF;
 }
+uint16_t ebbrt::IxgbeDriverRep::ReadRdt_1(uint32_t n) {
+  auto reg = root_.bar0_.Read32(0x01018 + 0x40 * n);
+  return reg & 0xFFFF;
+}
+
 void ebbrt::IxgbeDriverRep::WriteRdt_1(uint32_t n, uint32_t m) {
   root_.bar0_.Write32(0x01018 + 0x40 * n, m);
 }
