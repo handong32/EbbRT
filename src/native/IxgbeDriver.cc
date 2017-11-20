@@ -30,7 +30,7 @@ void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
     ixgbe_dev->SetupMultiQueue(i);
   }
 
-  //ixgbe_dev->FinishSetup();
+  ixgbe_dev->FinishSetup();
   
   ebbrt::clock::SleepMilli(200);
   ebbrt::kprintf("intel 82599 card initialzed\n");
@@ -1549,7 +1549,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
       event_manager->AllocateVector([this]() { ebb_->ReceivePoll(); });
   }
   
-  ebbrt::kprintf("*** %s for Core %d, rcv_vector = 0x%X\n", __FUNCTION__, i, rcv_vector);
+  //ebbrt::kprintf("*** %s for Core %d, rcv_vector = 0x%X\n", __FUNCTION__, i, rcv_vector);
 
   // allocate memory for descriptor rings
   ixgmq[i].reset(new e10Kq(i, Cpu::GetMyNode()));
@@ -1615,7 +1615,8 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   }
   
   // must be greater than rsc delay
-  WriteEitr(i, 0x80 << 3); // 7 * 2us = 14 us
+  //WriteEitr(i, 0x80 << 3); // 7 * 2us = 14 us
+  WriteEitr(i, 0x7 << 3); // 16 * 2us = 32 us
   //WriteEitr(i, 0x0);
   /*if(i < 24 ) {
     WriteEitr(i, 0x7 << 3);
@@ -1661,7 +1662,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
     tmp->packet_buffer = rxphys;
     //TODO only use this if enabling header splitting?
     tmp->header_buffer = 0;
-    ebbrt::kprintf("RSC %s tail=%d %p %p\n", __FUNCTION__, tail, tmp->packet_buffer, tmp->header_buffer);
+    //ebbrt::kprintf("RSC %s tail=%d %p %p\n", __FUNCTION__, tail, tmp->packet_buffer, tmp->header_buffer);
 #else
     ixgmq[i]->rx_ring_[tail].buffer_address = rxphys;
     //ebbrt::kprintf("%s %d %p\n", __FUNCTION__, j, ixgmq_.rx_ring_[tail].buffer_address);
@@ -1708,7 +1709,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
 
   // poll until set, TODO: Timeout
   while (ReadTxdctl_enable(i) == 0);
-  ebbrt::kprintf("TX queue enabled\n");
+  //ebbrt::kprintf("TX queue enabled\n");
   
   // TODO: set up dca txctrl FreeBSD?
   WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // clear TXdescWBROen
@@ -1740,7 +1741,7 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_
   tmp = reinterpret_cast<rdesc_adv_wb_t *>(&(ixgmq_.rx_ring_[ixgmq_.rx_head_]));
   //int c = static_cast<int>(Cpu::GetMine());
   
-  std::atomic_thread_fence(std::memory_order_seq_cst);
+  //std::atomic_thread_fence(std::memory_order_seq_cst);
   
   if(!(tmp->dd)) {
     return 1;
@@ -1949,7 +1950,7 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_
     }
 
     //auto test = ixgmq_.circ_buffer_[ixgmq_.rx_head_]->Data();
-    ebbrt::kprintf("Core = %d rx_head = %d pkt_len = %d addr[0] = %p addr[1] = %p\n", c, ixgmq_.rx_head_, tmp.length, tmp.raw[0], tmp.raw[1]);
+    //ebbrt::kprintf("Core = %d rx_head = %d pkt_len = %d addr[0] = %p addr[1] = %p\n", c, ixgmq_.rx_head_, tmp.length, tmp.raw[0], tmp.raw[1]);
 
     // reset descriptor
     ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0] = 0;
@@ -1972,12 +1973,12 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   bool process_rsc;
   uint32_t count;
   uint32_t rnt;
-
-  //int c = static_cast<int>(Cpu::GetMine());
+  static bool ret = false;
+  int c = static_cast<int>(Cpu::GetMine());
   process_rsc = false;
   
 retry:
-  //ebbrt::kprintf("%s for Core %d\n", __FUNCTION__, c);
+  ebbrt::kprintf("%s %d\n", __FUNCTION__, c);
   rxflag = 0;
   count = 0;
   rnt = 0;
@@ -1987,6 +1988,7 @@ retry:
   while (GetRxBuf(&len, &bAddr, &rxflag, &process_rsc, &rnt) == 0) {
     // hit last rsc context, start to process all buffers
     if(process_rsc) {
+      ret = true;
       process_rsc = false;
       count++;
       
@@ -2067,7 +2069,7 @@ retry:
   }
   //goto retry;
   //keep looping back once we see start of rsc context
-  if(ixgmq_.rsc_used) {
+  if(likely(ret)) {
     goto retry;
   }
 }

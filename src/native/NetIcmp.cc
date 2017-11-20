@@ -11,17 +11,24 @@
 void ebbrt::NetworkManager::Interface::ReceiveIcmp(
     EthernetHeader& eth_header, Ipv4Header& ip_header,
     std::unique_ptr<MutIOBuf> buf) {
+  //ebbrt::kprintf("%s\n", __PRETTY_FUNCTION__);
   auto packet_len = buf->ComputeChainDataLength();
 
   if (unlikely(packet_len < sizeof(IcmpHeader)))
     return;
 
   auto dp = buf->GetMutDataPointer();
+  /*auto tbuf = dp.Data();
+  for(int i = 0; i < 60; i++)
+  {
+    ebbrt::kprintf("%02X ", tbuf[i]);
+  }
+  ebbrt::kprintf("\n");*/
   auto& icmp_header = dp.Get<IcmpHeader>();
 
   // checksum
-  if (IpCsum(*buf))
-    return;
+  //if (IpCsum(*buf))
+  //  return;
 
   // if echo_request, send reply
   if (icmp_header.type == kIcmpEchoRequest) {
@@ -48,6 +55,7 @@ void ebbrt::NetworkManager::Interface::ReceiveIcmp(
     pinfo.flags |= PacketInfo::kNeedsIpCsum;
     
     buf->Retreat(ip_header.HeaderLength());
+  
     EthArpSend(kEthTypeIp, ip_header, std::move(buf), pinfo);
   }
 }

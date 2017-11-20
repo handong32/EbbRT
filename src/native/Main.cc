@@ -159,7 +159,7 @@ ebbrt::Main(multiboot::Information* mbi) {
 // Dhcp completed
 	  ebbrt::kprintf("main 1\n");
 #ifdef __EBBRT_ENABLE_DISTRIBUTED_RUNTIME__
-          Messenger::Init();
+          //Messenger::Init();
 	  ebbrt::kprintf("main 2\n");
           //runtime::Init();
 	  ebbrt::kprintf("main 3\n");
