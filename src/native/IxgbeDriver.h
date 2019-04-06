@@ -20,10 +20,10 @@
 #include "SlabAllocator.h"
 
 // Receive Side Scaling (RSC) enabled
-#define RSC_EN
+//#define RSC_EN
 // Direct Cache Access (DCA) enabled
-#define DCA_ENABLE
-// Transmit Header Writeback enabled
+//#define DCA_ENABLE
+//// Transmit Header Writeback enabled
 #define TX_HEAD_WB
 
 namespace ebbrt {
@@ -79,7 +79,7 @@ class IxgbeDriver : public EthernetDevice {
 
  protected:
   static const constexpr uint16_t kIxgbeVendorId = 0x8086;
-  static const constexpr uint16_t kIxgbeDeviceId = 0x10F8;  // 0x10FB;
+  static const constexpr uint16_t kIxgbeDeviceId = 0x10FB;
 
   /* FreeBSD:
    * RxDescriptors Valid Range: 64-4096 Default Value: 256 This value is the
@@ -91,12 +91,24 @@ class IxgbeDriver : public EthernetDevice {
    *	against the system mbuf pool limit, you can tune nmbclusters
    *	to adjust for this.
    */
-  static const constexpr uint32_t NTXDESCS = 256;
-  static const constexpr uint32_t NRXDESCS = 256;
-  // static const constexpr uint32_t NTXDESCS = 4096;
-  // static const constexpr uint32_t NRXDESCS = 4096;
-  static const constexpr uint32_t RXBUFSZ = 4096;
-  // static const constexpr uint32_t RXBUFSZ = 16384;
+  // Linux Defaults
+  static const constexpr uint32_t NTXDESCS = 512;
+  static const constexpr uint32_t NRXDESCS = 512;
+  static const constexpr uint32_t RXBUFSZ = 2048;
+  static const constexpr uint32_t BSIZEHEADER = 256;
+  
+  //static const constexpr uint32_t NTXDESCS = 8192;
+  //static const constexpr uint32_t NRXDESCS = 8192;
+  //static const constexpr uint32_t RXBUFSZ = 4096;
+  //static const constexpr uint32_t RXBUFSZ = 16384;
+
+  static const constexpr uint8_t ITR_INTERVAL = 6;
+  // 3 bits only (0 - 7) in (RSC_DELAY + 1) * 4 us
+  static const constexpr uint8_t RSC_DELAY = 1;
+  
+  // DMA Tx TCP Max Allow Size Requests — DTXMXSZRQ
+  static const constexpr uint16_t MAX_BYTES_NUM_REQ = 0x10;
+  //static const constexpr uint16_t MAX_BYTES_NUM_REQ = 0xFFF;
 
   // Class with per core queue data structures
   class e10Kq {
@@ -446,17 +458,17 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
   void AddContext(uint8_t idx, uint8_t maclen, uint16_t iplen, uint8_t l4len,
                   enum l4_type l4type);
   void AddTx(const uint8_t* pa, uint64_t len, uint64_t totallen, bool first,
-             bool last, uint8_t ctx, bool ip_cksum, bool tcpudp_cksum);
+             bool last, uint8_t ctx, bool ip_cksum, bool tcpudp_cksum, bool tse, int hdr_len);
 
  private:
   uint16_t ReadRdh_1(uint32_t n);
   uint16_t ReadRdt_1(uint32_t n);
   void WriteRdt_1(uint32_t n, uint32_t m);
   void WriteRdh_1(uint32_t n, uint32_t m);
-  // uint16_t ReadRdt_1(uint32_t n);
-  // uint16_t ReadRdh_1(uint32_t n);
   void WriteTdt_1(uint32_t n, uint32_t m);
   void WriteEimcn(uint32_t n, uint32_t m);
+  void WriteEimc(uint32_t m);
+  void WriteEims(uint32_t m);
   uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_t* rxflag,
                     bool* process_rsc, uint32_t* rnt);
 

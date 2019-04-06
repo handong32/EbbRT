@@ -99,15 +99,20 @@ void ebbrt::IxgbeDriverRep::AddContext(uint8_t idx, uint8_t maclen,
   ixgmq_.tx_isctx_[tail] = true;
 
   // refer to 82599 datasheet for these settings
+  actx->iplen = iplen;
+  actx->maclen = maclen;
+
   actx->dytp = 0b0010;
   actx->dext = 1;
   actx->idx = idx;
-  actx->maclen = maclen;
-  actx->iplen = iplen;
 
   actx->ipv4 = 1;
-  actx->l4len = 0;  // ignored when TSE not set
+  //actx->l4len = 0;  // ignored when TSE not set
+  actx->l4len = 0x14;  // TSE for TCP is 20
   actx->l4t = l4type;
+
+  actx->mss = 0x5b4; // MSS - 1460
+  //actx->mss = 0x5a8; // MSS - 1448
 
   // need to increment tail
   ixgmq_.tx_last_tail_ = ixgmq_.tx_tail_;
@@ -115,10 +120,10 @@ void ebbrt::IxgbeDriverRep::AddContext(uint8_t idx, uint8_t maclen,
 }
 
 // Add a new packet to be transmitted
-void ebbrt::IxgbeDriverRep::AddTx(const uint8_t* pa, uint64_t len,
+void ebbrt::IxgbeDriverRep::AddTx(uint64_t pa, uint64_t len,
                                   uint64_t totallen, bool first, bool last,
                                   uint8_t ctx, bool ip_cksum,
-                                  bool tcpudp_cksum) {
+                                  bool tcpudp_cksum, bool tse, int hdr_len) {
   tdesc_advance_tx_rf_t* actx;
 
   auto tail = ixgmq_.tx_tail_;
@@ -131,37 +136,40 @@ void ebbrt::IxgbeDriverRep::AddTx(const uint8_t* pa, uint64_t len,
 
   // pa is physical address of where send buffer exists
   actx->address = reinterpret_cast<uint64_t>(pa);
+
   actx->dtalen = len;
   if (first) {
-    actx->paylen = totallen;
+    if(tse) {
+      actx->paylen = totallen - hdr_len;
+    } else {
+      actx->paylen = totallen;
+    }
+
+    // checksum
+    actx->ifcs = 1;
+
+    // tcp segmentation offload
+    if(tse) {
+      actx->tse = 1;
+    }
   }
 
   // type is advanced
   actx->dtyp = 0b0011;
   actx->dext = 1;
 
-  // rs bit should only be set when eop is set
-  if (last) {
-    actx->rs = 1;
-  } else {
-    actx->rs = 0;
-  }
-
-  // checksum
-  actx->ifcs = 1;
-
   // set last packet bit
   if (last) {
     actx->eop = 1;
+    // rs bit should only be set when eop is set
+    actx->rs = 1;
   } else {
     actx->eop = 0;
   }
 
-  // TODO enable ip checksum
-  if (ctx != -1) {
+  if (ctx != -1 && first) {
     actx->idx = ctx;
-    actx->cc = 1;
-    actx->ixsm = ip_cksum;  // no ip checksum
+    actx->ixsm = ip_cksum;  // ip checksum offload
     actx->txsm = tcpudp_cksum;  // udp or tcp checksum offload
   }
 
@@ -170,20 +178,18 @@ void ebbrt::IxgbeDriverRep::AddTx(const uint8_t* pa, uint64_t len,
 }
 
 void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
-  auto dp = buf->GetDataPointer();
-  auto len = buf->ComputeChainDataLength();
-  auto count = buf->CountChainElements();
   bool ip_cksum = false;
   bool tcpudp_cksum = false;
-
-  ebbrt::kbugon(len >= 0xA0 * 1000,
-                "%s packet len bigger than max ether length\n", __FUNCTION__);
-
+  uint64_t data;
+  size_t len, count;
+  int mcore = (int)Cpu::GetMine();
+  
 // TODO threshold for triggering reclaim tx buffers
 #ifndef TX_HEAD_WB
   size_t free_desc =
       IxgbeDriver::NTXDESCS -
       (std::abs(static_cast<int>(ixgmq_.tx_tail_ - ixgmq_.tx_head_)));
+  count = buf->CountChainElements();
   // free descripts must have enough for count in chained iobufs
   if (free_desc < (count + 1)) {
     // reclaim buffers
@@ -201,80 +207,89 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   if (pinfo.flags & PacketInfo::kNeedsIpCsum) {
     ip_cksum = true;
   }
-
-  // NEED CHECKSUM
+  
   if (pinfo.flags & PacketInfo::kNeedsCsum) {
     tcpudp_cksum = true;
+  }
+  
+  // buffers are chained
+  if(buf->IsChained()) {
+    len = buf->ComputeChainDataLength();
+    count = buf->CountChainElements();
+    
+    if(tcpudp_cksum) {
+      if (pinfo.csum_offset == 6) {
+	AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_udp);
+      } else if (pinfo.csum_offset == 16) {
+	AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_tcp);
+      } else {
+	ebbrt::kabort("%s unknown packet type checksum\n", __FUNCTION__);
+      }
+    }
 
-    // check datasheet for numbers
-    if (pinfo.csum_offset == 6) {
-      AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_udp);
-    } else if (pinfo.csum_offset == 16) {
-      AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_tcp);
+    // 7.2.1.1
+    // A packet (or multiple packets in transmit segmentation) can span
+    // any number of buffers (and their descriptors) up to a limit of 40 minus WTHRESH minus 2
+    if(count > 38) {
+      //ebbrt::kprintf_force("count = %d\n", count);
+      std::unique_ptr<MutUniqueIOBuf> b;
+      b = MakeUniqueIOBuf(len);
+      auto mdata = b->MutData();
+      for (auto& buf_it : *buf) {
+	memcpy(mdata, buf_it.Data(), buf_it.Length());
+	mdata += buf_it.Length();
+      }
+      data = reinterpret_cast<uint64_t>(b->MutData());
+      AddTx(data, len, len, true, true, 0, ip_cksum, tcpudp_cksum, len > 1514, static_cast<int>(pinfo.hdr_len));
+      
     } else {
-      ebbrt::kabort("%s unknown packet type checksum\n", __FUNCTION__);
-    }
-
-    // if buffer is chained
-    if (buf->IsChained()) {
       size_t counter = 0;
       for (auto& buf_it : *buf) {
-        counter++;
-
-        // first buffer
-        if (counter == 1) {
-          AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len,
-                true, false, 0, ip_cksum, tcpudp_cksum);
-        } else {
-          // last buffer
-          if (counter == count) {
-            AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()),
-                  len, false, true, 0, ip_cksum, tcpudp_cksum);
-          } else {
-            AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()),
-                  len, false, false, 0, ip_cksum, tcpudp_cksum);
-          }
-        }
+	counter++;
+        
+	uint64_t dlen = reinterpret_cast<uint64_t>(buf_it.Length());
+	uint64_t daddr = reinterpret_cast<uint64_t>(buf_it.Data());
+	
+	// first buffer
+	if (counter == 1) {
+	  AddTx(daddr, dlen, len, true, false, 0, ip_cksum, tcpudp_cksum,
+		len > 1514, static_cast<int>(pinfo.hdr_len));
+	  //last buffer
+	} else if (counter == count ) { 
+	  AddTx(daddr, dlen, len, false, true, 0, ip_cksum, tcpudp_cksum,
+		len > 1514, static_cast<int>(pinfo.hdr_len));
+	} else {
+	  AddTx(daddr, dlen, len, false, false, 0, ip_cksum, tcpudp_cksum,
+		len > 1514, static_cast<int>(pinfo.hdr_len));
+	}
       }
     }
-    // not chained
-    else {
-      AddTx(buf->Data(), len, len, true, true, 0, ip_cksum, tcpudp_cksum);
-    }
-  } else {
-    // NO CHECKSUM FLAG SET
-    // if buffer is chained
-    if (buf->IsChained()) {
-      size_t counter = 0;
-      for (auto& buf_it : *buf) {
-        counter++;
+  } else { // buffers NOT chained
+    data = reinterpret_cast<uint64_t>(buf->Data());
+    len = buf->ComputeChainDataLength();
 
-        // first buffer
-        if (counter == 1) {
-          AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()), len,
-                true, false, 0, ip_cksum, tcpudp_cksum);
-        } else {
-          // last buffer
-          if (counter == count) {
-            AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()),
-                  len, false, true, 0, ip_cksum, tcpudp_cksum);
-          } else {
-            AddTx(buf_it.Data(), reinterpret_cast<uint64_t>(buf_it.Length()),
-                  len, false, false, 0, ip_cksum, tcpudp_cksum);
-          }
-        }
+    if(tcpudp_cksum) {
+      // check datasheet for numbers
+      if (pinfo.csum_offset == 6) {
+	AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_udp);
+      } else if (pinfo.csum_offset == 16) {
+	AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_tcp);
+      } else {
+	ebbrt::kabort("%s unknown packet type checksum\n", __FUNCTION__);
       }
-    }
-    // not chained
-    else {
-      AddTx(buf->Data(), len, len, true, true, 0, ip_cksum, tcpudp_cksum);
+      
+      AddTx(data, len, len, true, true, 0, ip_cksum, tcpudp_cksum, len > 1514, static_cast<int>(pinfo.hdr_len));
+    } else {
+      AddTx(data, len, len, true, true, 0, ip_cksum, tcpudp_cksum, len > 1514, static_cast<int>(pinfo.hdr_len));
     }
   }
-
+  
   // bump tx_tail
   // indicates position beyond last descriptor hw
-  WriteTdt_1(Cpu::GetMine(), ixgmq_.tx_tail_);
+  size_t tail = ixgmq_.tx_tail_;
+  WriteTdt_1(mcore, tail);
 }
+
 
 void ebbrt::IxgbeDriver::WriteRxctrl(uint32_t m) {
   // Disable RXCTRL - 8.2.3.8.10
@@ -1342,7 +1357,8 @@ void ebbrt::IxgbeDriver::Init() {
 #ifdef RSC_EN
   // TODO: RSC delay value, just a guess at (1 + 1) * 4us = 8 us
   // Recommended value based on 7.3.2.1.1
-  WriteGpie(0x1 << 11);
+  WriteGpie(IxgbeDriver::RSC_DELAY << 11);
+  ebbrt::kprintf_force("RSC enabled, RSC_DELAY = %d\n", (IxgbeDriver::RSC_DELAY + 1) * 4);
 #endif
 
   /* FreeBSD:
@@ -1452,7 +1468,7 @@ void ebbrt::IxgbeDriver::Init() {
    * Clear RTTDCS.ARBDIS to 0b.
    */
   WriteRttdcs(0x1 << 6);
-  WriteDtxmxszrq(0xFFF);
+  WriteDtxmxszrq(MAX_BYTES_NUM_REQ);
   WriteTxpbsize(0, 0xA0 << 10);
   WriteTxpbThresh(0, 0xA0);
   for (auto i = 1; i < 8; i++) {
@@ -1581,7 +1597,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
 
   // must be greater than rsc delay
   // WriteEitr(i, 0x80 << 3); // 7 * 2us = 14 us
-  WriteEitr(i, 0x7 << 3);  // 16 * 2us = 32 us
+  WriteEitr(i, (IxgbeDriver::ITR_INTERVAL << 3));
 
   // 7.3.1.4 - Note that there are no EIAC(1)...EIAC(2) registers.
   // The hardware setting for interrupts 16...63 is always auto clear.
@@ -1835,7 +1851,6 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr,
 
 #else
   // no RSC so just get one packet at a time
-  int c = static_cast<int>(Cpu::GetMine());
   rdesc_legacy_t tmp;
   tmp = ixgmq_.rx_ring_[ixgmq_.rx_head_];
 
@@ -1880,10 +1895,8 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   bool process_rsc;
   uint32_t count;
   uint32_t rnt;
-  static bool ret = false;
   process_rsc = false;
 
-retry:
   rxflag = 0;
   count = 0;
   rnt = 0;
@@ -1957,11 +1970,6 @@ retry:
     // update reg
     WriteRdt_1(Cpu::GetMine(), ixgmq_.rx_tail_);
   }
-
-  // keep looping back once we see start of rsc context
-  if (likely(ret)) {
-    goto retry;
-  }
 }
 
 ebbrt::IxgbeDriverRep::IxgbeDriverRep(const IxgbeDriver& root)
@@ -1999,3 +2007,9 @@ void ebbrt::IxgbeDriverRep::WriteEimcn(uint32_t n, uint32_t m) {
   auto reg = root_.bar0_.Read32(0x00AB0 + 4 * n);
   root_.bar0_.Write32(0x00AB0 + 4 * n, reg | m);
 }
+
+// 8.2.3.5.4 Extended Interrupt Mask Clear Register- EIMC (0x00888; WO)
+void ebbrt::IxgbeDriverRep::WriteEimc(uint32_t m) { root_.bar0_.Write32(0x00888, m); }
+
+// 8.2.3.5.3 Extended Interrupt Mask Set/Read Register- EIMS (0x00880; RWS)
+void ebbrt::IxgbeDriverRep::WriteEims(uint32_t m) { root_.bar0_.Write32(0x00880, m); }
