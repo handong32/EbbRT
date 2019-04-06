@@ -12,6 +12,9 @@ void ebbrt::kvprintf(const char* __restrict format, va_list va) {
   auto len = vsnprintf(nullptr, 0, format, va);
   char buffer[len + 1];  // NOLINT
   vsnprintf(buffer, len + 1, format, va2);
+#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
+  console::Write("\r");
+#endif
   console::Write(buffer);
 }
 

@@ -118,7 +118,7 @@ void ebbrt::pci::Init() {
 #ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
   // TODO - Kludge to identify where NIC sits in device tree, should incorporate
   // Dan's pull request for enumerating bridges
-  EnumerateBus(0x1);
+  EnumerateBus(0x4);
 #endif
 }
 

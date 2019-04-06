@@ -1905,7 +1905,6 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   while (GetRxBuf(&len, &bAddr, &rxflag, &process_rsc, &rnt) == 0) {
     // hit last rsc context, start to process all buffers
     if (process_rsc) {
-      ret = true;
       process_rsc = false;
       count++;
 

@@ -457,7 +457,7 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo);
   void AddContext(uint8_t idx, uint8_t maclen, uint16_t iplen, uint8_t l4len,
                   enum l4_type l4type);
-  void AddTx(const uint8_t* pa, uint64_t len, uint64_t totallen, bool first,
+  void AddTx(uint64_t pa, uint64_t len, uint64_t totallen, bool first,
              bool last, uint8_t ctx, bool ip_cksum, bool tcpudp_cksum, bool tse, int hdr_len);
 
  private:
