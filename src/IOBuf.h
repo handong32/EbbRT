@@ -320,11 +320,34 @@ class MutIOBuf : public IOBuf {
 
     template <typename T> T& GetNoAdvance() {
       assert(p_->Length() > 0);
+      
+#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
+      if (p_->Length() - offset_ < sizeof(T)) {
+        // request straddles buffers, allocate a new chunk of memory to copy it
+        // into (so it is contiguous)
+        chunk_list.emplace_front();
+        auto& chunk = chunk_list.front();
+        chunk.reserve(sizeof(T));
+        auto p = p_;
+        auto len = sizeof(T);
+        auto offset = offset_;
+        while (len > 0) {
+          auto remainder = std::min(p->Length() - offset, len);
+          auto data = p->Data() + offset;
+          chunk.insert(chunk.end(), data, data + remainder);
+          p = p->Next();
+          offset = 0;
+          len -= remainder;
+        }	
+        return *reinterpret_cast<T*>(Data());
+      }
+#else
+
       if (p_->Length() - offset_ < sizeof(T)) {
         throw std::runtime_error(
             "MutDataPointer::Get(): request straddles buffer");
       }
-
+#endif
       return *reinterpret_cast<T*>(Data());
     }
 
@@ -355,6 +378,7 @@ class MutIOBuf : public IOBuf {
    private:
     MutIOBuf* p_{nullptr};
     size_t offset_{0};
+    std::forward_list<std::vector<char>> chunk_list;
   };
 
   MutDataPointer GetMutDataPointer() { return MutDataPointer(this); }
