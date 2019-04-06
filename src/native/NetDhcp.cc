@@ -13,6 +13,7 @@
 
 ebbrt::Future<void> ebbrt::NetworkManager::StartDhcp() {
   kbugon(Cpu::GetMine() != 0, "Dhcp not started on core 0!");
+#ifndef __EBBRT_ENABLE_BAREMETAL_NIC__
   // Before DHCP, check if a static IP has been specified
   auto cmdline = std::string(ebbrt::multiboot::CmdLine());
   auto loc = cmdline.find("nodhcp");
@@ -20,6 +21,7 @@ ebbrt::Future<void> ebbrt::NetworkManager::StartDhcp() {
     kprintf("Warning: Skipping DHCP, static IP detected\n");
     return MakeReadyFuture<void>();
   }
+#endif
   if (interface_)
     return interface_->StartDhcp();
 
@@ -194,10 +196,12 @@ void ebbrt::NetworkManager::Interface::DhcpHandleAck(
   kassert(netmask_opt);
   addr->netmask = *netmask_opt;
 
+#ifndef __EBBRT_ENABLE_BAREMETAL_NIC__ // assert fails in baremetal
   auto gw_opt = DhcpGetOptionLong(message, kDhcpOptionRouter);
   kassert(gw_opt);
   addr->gateway = *gw_opt;
-
+#endif
+  
   SetAddress(std::unique_ptr<ItfAddress>(addr));
 
   DhcpSetState(DhcpPcb::State::kBound);
