@@ -363,6 +363,7 @@ void ebbrt::NetworkManager::TcpEntry::Destroy() {
     std::lock_guard<ebbrt::SpinLock> guard(network_manager->tcp_write_lock_);
     network_manager->tcp_pcbs_.erase(*this);
   }
+  kassert(this);
   event_manager->DoRcu([this]() { delete this; });
 }
 
@@ -719,6 +720,9 @@ bool ebbrt::NetworkManager::TcpEntry::Receive(
       // Second check the RST bit
       if (unlikely(flags & kTcpRst)) {
         state = kClosed;
+#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
+	bool flag = false;
+#endif
         if (state == kSynReceived) {
           // RFC 793 Page 70:
           // "If this connection was initiated with a passive OPEN (i.e., came
@@ -729,7 +733,6 @@ bool ebbrt::NetworkManager::TcpEntry::Receive(
           // In either case, all segments on the retransmission queue should be
           // removed.  And in the active OPEN case, enter the CLOSED state and
           // delete the TCB, and return."
-
           handler->Abort();
         } else if (state >= kEstablished && state <= kCloseWait) {
           // If the RST bit is set then, any outstanding RECEIVEs and SEND
@@ -745,10 +748,17 @@ bool ebbrt::NetworkManager::TcpEntry::Receive(
           // RFC 793 Page 70:
           // If the RST bit is set then, enter the CLOSED state, delete the TCB,
           // and return.
+#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
+	  flag = true;
+#endif
         }
         Purge();
         DisableTimers();
-        Destroy();
+#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
+	if (flag == false) Destroy();
+#else
+	Destroy();
+#endif
         return false;
       } else if (unlikely(flags & kTcpSyn)) {
         // RFC 793 Page 71:
