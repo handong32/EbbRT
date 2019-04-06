@@ -712,7 +712,6 @@ bool ebbrt::NetworkManager::TcpEntry::Receive(
 
       if (TcpSeqGT(rcv_nxt, info.seqno)) {
         // Trim the front
-        kprintf(">> rcv_nxt > info.seqno \n");
         buf->Advance(rcv_nxt - info.seqno);
         info.tcplen -= rcv_nxt - info.seqno;
       }
@@ -1085,6 +1084,10 @@ void ebbrt::NetworkManager::TcpEntry::SendSegment(TcpSegment& segment) {
     pinfo.gso_type = PacketInfo::kGsoTcpv4;
     pinfo.hdr_len = segment.th.HdrLen();
     pinfo.gso_size = mss;
+#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
+    segment.th.checksum =
+      OffloadPseudoCsumTso(kIpProtoTCP, address, std::get<0>(key));
+#endif
   }
 
   network_manager->SendIp(CreateRefChain(*(segment.buf)), address,

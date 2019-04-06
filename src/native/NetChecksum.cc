@@ -156,6 +156,11 @@ uint16_t ebbrt::OffloadPseudoCsum(const IOBuf& buf, uint8_t proto,
   return From32To16(PseudoCsum(buf.ComputeChainDataLength(), proto, src, dst));
 }
 
+uint16_t ebbrt::OffloadPseudoCsumTso(uint8_t proto,
+				     Ipv4Address src, Ipv4Address dst) {
+  return From32To16(PseudoCsum(0, proto, src, dst));
+}
+
 // Calculate the Ipv4 pseudo checksum with the provided header information
 uint16_t ebbrt::IpPseudoCsum(const IOBuf& buf, uint8_t proto, Ipv4Address src,
                              Ipv4Address dst) {
