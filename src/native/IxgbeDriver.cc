@@ -28,6 +28,11 @@ void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   ixgbe_dev->ebb_ =
       IxgbeDriverRep::Create(ixgbe_dev, ebb_allocator->AllocateLocal());
 
+  // only even core numbers
+  if(static_cast<int>(Cpu::Count()) > 1) {
+    kassert(static_cast<int>(Cpu::Count()) % 2 == 0);
+  }
+
   // initialize per core rx and tx queues
   for (size_t i = 0; i < Cpu::Count(); i++) {
     ixgbe_dev->SetupMultiQueue(i);
@@ -44,7 +49,47 @@ const ebbrt::EthernetAddress& ebbrt::IxgbeDriver::GetMacAddress() {
   return mac_addr_;
 }
 
+void ebbrt::IxgbeDriver::DumpStats() {
+  for (size_t i = 0; i < Cpu::Count(); i++) {
+    ebbrt::kprintf("Core %d STATS:\n", (int)i);
+    ebbrt::kprintf("\t num_recv_itrs:%lld\n", ixgmq[i]->stat_num_itr);
+    ebbrt::kprintf("\t num_send:%lld\n", ixgmq[i]->stat_num_send);
+    ebbrt::kprintf("\t num_rx_desc_proc:%lld\n", ixgmq[i]->stat_num_rx);
+    ebbrt::kprintf("\t num_tx_desc_proc:%lld\n", ixgmq[i]->stat_num_tx);
+
+    // reset to 0
+    ixgmq[i]->stat_num_itr = 0;
+    ixgmq[i]->stat_num_send = 0;
+    ixgmq[i]->stat_num_rx = 0;
+    ixgmq[i]->stat_num_tx = 0;
+
+    if(ixgmq[i]->stat_perf == false) {
+      ixgmq[i]->perfCycles = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::cycles);
+      ixgmq[i]->perfCycles.Start();
+      ixgmq[i]->perfInst = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::instructions);
+      ixgmq[i]->perfInst.Start();
+      ixgmq[i]->stat_perf =true;
+    } else {
+      ixgmq[i]->perfCycles.Stop();
+      ixgmq[i]->perfInst.Stop();
+      double cyc = static_cast<double>(ixgmq[i]->perfCycles.Read());
+      double inst = static_cast<double>(ixgmq[i]->perfInst.Read());
+
+      ebbrt::kprintf("Core %d PMC:\n", (int)i);
+      ebbrt::kprintf("\t cycles:%llf \n", cyc);
+      ebbrt::kprintf("\t instructions:%llf\n", inst);
+      ebbrt::kprintf("\t ipc: %llf\n", inst/cyc);
+      ixgmq[i]->stat_perf = false;
+    }
+  }
+}
+
 void ebbrt::IxgbeDriver::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
+#ifdef STATS_EN
+  if(pinfo.get_stats) {
+    DumpStats();
+  }
+#endif
   ebb_->Send(std::move(buf), std::move(pinfo));
 }
 
@@ -175,6 +220,9 @@ void ebbrt::IxgbeDriverRep::AddTx(uint64_t pa, uint64_t len,
 
   ixgmq_.tx_last_tail_ = ixgmq_.tx_tail_;
   ixgmq_.tx_tail_ = (tail + 1) % ixgmq_.tx_size_;
+#ifdef STATS_EN
+  ixgmq_.stat_num_tx ++;
+#endif
 }
 
 void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
@@ -182,7 +230,11 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   bool tcpudp_cksum = false;
   uint64_t data;
   size_t len, count;
-  int mcore = (int)Cpu::GetMine();
+  uint32_t mcore = static_cast<uint32_t>(Cpu::GetMine());
+
+#ifdef STATS_EN
+  ixgmq_.stat_num_send ++;
+#endif
   
 // TODO threshold for triggering reclaim tx buffers
 #ifndef TX_HEAD_WB
@@ -765,6 +817,7 @@ void ebbrt::IxgbeDriver::WritePsrtypeZero(uint32_t n) {
 // 4*n, n=0...31; RW)
 void ebbrt::IxgbeDriver::WriteReta(uint32_t n, uint32_t m) {
   bar0_.Write32(0x0EB00 + 4 * n, m);
+  ebbrt::kprintf("WriteReta(n=%d) = 0x%08X\n", n, m);
 }
 
 // 8.2.3.7.6 Receive Filter Control Register — RFCTL (0x05008; RW)
@@ -1276,6 +1329,7 @@ void ebbrt::IxgbeDriver::GlobalReset() {
  **/
 void ebbrt::IxgbeDriver::Init() {
   uint64_t d_mac;
+  uint32_t ncore = static_cast<uint32_t>(Cpu::Count());
 
   ebbrt::kprintf("%s ", __PRETTY_FUNCTION__);
   bar0_.Map();  // allocate virtual memory
@@ -1419,6 +1473,10 @@ void ebbrt::IxgbeDriver::Init() {
 
 #ifndef RSC_EN
   WriteRxcsum(0x1 << 12);  // IP payload checksum enable
+#else
+  // note: PCSD: The Fragment Checksum and IP Identification fields are mutually exclusive with
+  // the RSS hash. Only one of the two options is reported in the Rx descriptor.
+  WriteRxcsum(0x2000);
 #endif
 // TODO RQTC
 
@@ -1432,10 +1490,48 @@ void ebbrt::IxgbeDriver::Init() {
     WriteMpsar(i, 0x0);
   }
 
-  // TODO RSSRK
+  // RSSRK - random seeds taken from Linux
+  WriteRssrk(0, 0xA38DD80F);
+  WriteRssrk(1, 0xD107C3DC);
+  WriteRssrk(2, 0x8CEB19C4);
+  WriteRssrk(3, 0xA41E1B6B);
+  WriteRssrk(4, 0xB7218638);
+  WriteRssrk(5, 0x6B8B6155);
+  WriteRssrk(6, 0xDC8D08B5);
+  WriteRssrk(7, 0xD2E8684B);
+  WriteRssrk(8, 0xECEF8417);
+  WriteRssrk(9, 0xE56C84D5);
 
-  for (auto i = 0; i < 32; i++) {
-    WriteReta(i, 0x0);
+  // Fill in RSS redirection table (128 entries), sets which core the lowest 7 bits of hashed output goes to
+  // hacky atm
+  for (auto i = 0; i < 32; i += 4) {
+    // all route to core 0
+    if(ncore == 1) {
+      WriteReta(i, 0x0000000);
+      WriteReta(i+1, 0x0000000);
+      WriteReta(i+2, 0x0000000);
+      WriteReta(i+3, 0x0000000);
+    } else if(ncore == 2) {
+      WriteReta(i, 0x1010100);
+      WriteReta(i+1, 0x1010100);
+      WriteReta(i+2, 0x1010100);
+      WriteReta(i+3, 0x1010100);
+    } else if(ncore == 4) {
+      WriteReta(i, 0x3020100);
+      WriteReta(i+1, 0x3020100);
+      WriteReta(i+2, 0x3020100);
+      WriteReta(i+3, 0x3020100);
+    } else if(ncore == 8) {
+      WriteReta(i, 0x3020100);
+      WriteReta(i+1, 0x7060504);
+      WriteReta(i+2, 0x3020100);
+      WriteReta(i+3, 0x7060504);
+    } else {
+      WriteReta(i, 0x3020100);
+      WriteReta(i+1, 0x7060504);
+      WriteReta(i+2, 0xB0A0908);
+      WriteReta(i+3, 0xF0E0D0C);
+    }
   }
 
   for (auto i = 0; i < 128; i++) {
@@ -1486,7 +1582,8 @@ void ebbrt::IxgbeDriver::Init() {
   for (auto i = 1; i < 8; i++) {
     WriteRxpbsize(i, 0x0);
   }
-  WriteMrqc(0x0);
+  WriteMrqc(0x330001);
+
   WritePfqde(0x0);
   WriteRtrup2tc(0x0);
   WriteMflcn(0x0 << 2);
@@ -1570,6 +1667,8 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   WritePsrtype(i, 0x1 << 4);  // Split received TCP packets after TCP header.
 #endif
 
+  // In NON-IOV, only psrtype[0] is used
+  WritePsrtype(0, 0x40001330);
   // Set head and tail pointers
   WriteRdt_1(i, 0x0);
   WriteRdh_1(i, 0x0);
@@ -1582,6 +1681,8 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
 
   // setup RX interrupts for queue i
   dev_.SetMsixEntry(i, rcv_vector, ebbrt::Cpu::GetByIndex(i)->apic_id());
+
+  ebbrt::kprintf("Core %d: BSIZEPACKET=%d bytes NTXDESCS=%d NRXDESCS=%d ITR_INTERVAL=%dus RCV_VECTOR=%d APIC_ID=%d \n", i, RXBUFSZ, NTXDESCS, NRXDESCS, (int) (IxgbeDriver::ITR_INTERVAL * 2), (int)rcv_vector, (int)(ebbrt::Cpu::GetByIndex(i)->apic_id()));
 
   // don't set up interrupts for tx since we have head writeback??
   auto qn = i / 2;  // put into correct IVAR
@@ -1597,7 +1698,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
 
   // must be greater than rsc delay
   // WriteEitr(i, 0x80 << 3); // 7 * 2us = 14 us
-  WriteEitr(i, (IxgbeDriver::ITR_INTERVAL << 3));
+  WriteEitr(i, (IxgbeDriver::ITR_INTERVAL << 3) | IXGBE_EITR_CNT_WDIS);
 
   // 7.3.1.4 - Note that there are no EIAC(1)...EIAC(2) registers.
   // The hardware setting for interrupts 16...63 is always auto clear.
@@ -1880,7 +1981,9 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr,
 
     // bump head ptr
     ixgmq_.rx_head_ = (ixgmq_.rx_head_ + 1) % ixgmq_.rx_size_;
-
+#ifdef STATS_EN
+    ixgmq_.stat_num_rx ++;
+#endif
     return 0;
   }
 #endif
@@ -1896,7 +1999,9 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   uint32_t count;
   uint32_t rnt;
   process_rsc = false;
-
+#ifdef STATS_EN
+  ixgmq_.stat_num_itr ++;
+#endif
   rxflag = 0;
   count = 0;
   rnt = 0;

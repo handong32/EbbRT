@@ -34,6 +34,8 @@
 #define IXGBE_MFLCN_RPFCE 0x00000004 /* Receive Priority FC Enable */
 #define IXGBE_MFLCN_RFCE 0x00000008 /* Receive FC Enable */
 
+#define IXGBE_EITR_CNT_WDIS     0x80000000
+
 enum l4_type { l4_type_udp = 0, l4_type_tcp, l4_type_sctp, l4_type_rsv };
 
 #define ETHHDR_LEN 14

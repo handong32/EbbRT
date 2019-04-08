@@ -18,13 +18,17 @@
 #include "Pci.h"
 #include "Pfn.h"
 #include "SlabAllocator.h"
+#include "Perf.h"
 
 // Receive Side Scaling (RSC) enabled
 //#define RSC_EN
 // Direct Cache Access (DCA) enabled
 //#define DCA_ENABLE
-//// Transmit Header Writeback enabled
-#define TX_HEAD_WB
+// Transmit Header Writeback enabled
+//#define TX_HEAD_WB
+
+// Collect Statistics Flag
+#define STATS_EN
 
 namespace ebbrt {
 
@@ -214,6 +218,20 @@ class IxgbeDriver : public EthernetDevice {
 #else
     size_t tx_head_;
 #endif
+
+    // stats
+    uint64_t stat_num_itr{0};
+    uint64_t stat_num_send{0};
+    uint64_t stat_num_rx{0};
+    uint64_t stat_num_tx{0};
+
+    bool stat_perf{false};
+    ebbrt::perf::PerfCounter perfCycles;
+    ebbrt::perf::PerfCounter perfInst;
+    ebbrt::perf::PerfCounter perfLLC_ref;
+    ebbrt::perf::PerfCounter perfLLC_miss;
+    ebbrt::perf::PerfCounter perfTLB_store_miss;
+    ebbrt::perf::PerfCounter perfTLB_load_miss;
   };
 
  private:
@@ -364,6 +382,10 @@ class IxgbeDriver : public EthernetDevice {
   void WriteDtxmxszrq(uint32_t m);
   void WriteMflcn(uint32_t m);
   void WriteReta(uint32_t n, uint32_t m);
+  void WriteRssrk(uint32_t n, uint32_t m) {
+    kassert(n < 10);
+    bar0_.Write32(0x0EB80 + 4 * n, m);
+  }
 
   void WritePsrtypeZero(uint32_t n);
 
@@ -426,6 +448,8 @@ class IxgbeDriver : public EthernetDevice {
   uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr);
   void SendPacket(uint32_t n);
 
+  // dump per core stats if STATS_EN
+  void DumpStats();
   e10k_queue_t& GetQueue() const { return *ixgq; }
 
   e10Kq& GetMultiQueue(size_t index) const { return *ixgmq[index]; }
