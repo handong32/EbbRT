@@ -28,7 +28,8 @@
 //#define TX_HEAD_WB
 
 // Collect Statistics Flag
-#define STATS_EN
+//#define STATS_EN
+//#define MAX_DESC
 
 namespace ebbrt {
 
@@ -95,14 +96,19 @@ class IxgbeDriver : public EthernetDevice {
    *	against the system mbuf pool limit, you can tune nmbclusters
    *	to adjust for this.
    */
-  // Linux Defaults
+
+#ifdef MAX_DESC
+  static const constexpr uint32_t NTXDESCS = 8192;
+  static const constexpr uint32_t NRXDESCS = 8192;
+#else
   static const constexpr uint32_t NTXDESCS = 512;
-  static const constexpr uint32_t NRXDESCS = 512;
+  static const constexpr uint32_t NRXDESCS = 512;  
+#endif
+
+  // Linux Defaults
   static const constexpr uint32_t RXBUFSZ = 2048;
   static const constexpr uint32_t BSIZEHEADER = 256;
-  
-  //static const constexpr uint32_t NTXDESCS = 8192;
-  //static const constexpr uint32_t NRXDESCS = 8192;
+    
   //static const constexpr uint32_t RXBUFSZ = 4096;
   //static const constexpr uint32_t RXBUFSZ = 16384;
 

@@ -49,7 +49,7 @@ void ebbrt::NetworkManager::Interface::ReceiveIcmp(
     PacketInfo pinfo;
     pinfo.flags = 0;
     // hijacking ping to dump ixgbe statistics
-    pinfo.get_stats = true;
+    pinfo.get_stats = false;
 #ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
     // hardware ip checksum offload
     pinfo.flags |= PacketInfo::kNeedsIpCsum;

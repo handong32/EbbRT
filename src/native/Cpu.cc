@@ -61,4 +61,4 @@ ebbrt::Cpu* ebbrt::Cpu::GetByApicId(size_t apic_id) {
   return &(*it);
 }
 
-size_t ebbrt::Cpu::Count() { return cpus->size(); }
+size_t ebbrt::Cpu::Count() { return 16; } //return cpus->size(); }

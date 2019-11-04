@@ -63,7 +63,7 @@ void ebbrt::IxgbeDriver::DumpStats() {
     ixgmq[i]->stat_num_rx = 0;
     ixgmq[i]->stat_num_tx = 0;
 
-    if(ixgmq[i]->stat_perf == false) {
+    /*if(ixgmq[i]->stat_perf == false) {
       ixgmq[i]->perfCycles = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::cycles);
       ixgmq[i]->perfCycles.Start();
       ixgmq[i]->perfInst = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::instructions);
@@ -80,8 +80,8 @@ void ebbrt::IxgbeDriver::DumpStats() {
       ebbrt::kprintf("\t instructions:%llf\n", inst);
       ebbrt::kprintf("\t ipc: %llf\n", inst/cyc);
       ixgmq[i]->stat_perf = false;
-    }
-  }
+      }*/
+  } 
 }
 
 void ebbrt::IxgbeDriver::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
@@ -334,6 +334,19 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     } else {
       AddTx(data, len, len, true, true, 0, ip_cksum, tcpudp_cksum, len > 1514, static_cast<int>(pinfo.hdr_len));
     }
+    
+    // dump eth packet info
+    ebbrt::kprintf("\t Send() on core: %d len=%d\n", mcore, len);
+    auto p1 = reinterpret_cast<uint8_t*>(data);
+    for (int i = 0; i < (int)len; i+=8) {
+      if (i+8 < (int)len) {
+	ebbrt::kprintf("%02X%02X%02X%02X%02X%02X%02X%02X\n", p1[i], p1[i+1], p1[i+2], p1[i+3], p1[i+4], p1[i+5], p1[i+6], p1[i+7]);
+      }
+      else{
+	ebbrt::kprintf("%02X\n", p1[i]);
+      }
+    }
+    ebbrt::kprintf("\n");
   }
   
   // bump tx_tail
@@ -1527,13 +1540,49 @@ void ebbrt::IxgbeDriver::Init() {
       WriteReta(i+2, 0x3020100);
       WriteReta(i+3, 0x7060504);
     } else {
-      WriteReta(i, 0x3020100);
-      WriteReta(i+1, 0x7060504);
-      WriteReta(i+2, 0xB0A0908);
-      WriteReta(i+3, 0xF0E0D0C);
+      WriteReta(i, 0x3020100); //8
+      WriteReta(i+1, 0x7060504); //8
+      WriteReta(i+2, 0xB0A0908); // 8
+      //WriteReta(i+3, 0x3020100);
+      //WriteReta(i+2, 0xB0A0908);
+      //WriteReta(i+3, 0xF0E0D0C);
     }
   }
 
+  //temp
+/*  WriteReta(3, 0x3020100);
+  WriteReta(7, 0x7060504);
+  WriteReta(11, 0xB0A0908);
+  WriteReta(15, 0x3020100);
+  WriteReta(19, 0x7060504);
+  WriteReta(23, 0xB0A0908);
+  WriteReta(27, 0x3020100);
+  WriteReta(31, 0x7060504);
+  WriteReta(35, 0xB0A0908);
+  WriteReta(39, 0x3020100);
+  WriteReta(43, 0x7060504);
+  WriteReta(47, 0xB0A0908);
+  WriteReta(51, 0x3020100);
+  WriteReta(55, 0x7060504);
+  WriteReta(59, 0xB0A0908);
+  WriteReta(63, 0x3020100);
+  WriteReta(67, 0x7060504);
+  WriteReta(71, 0xB0A0908);
+  WriteReta(75, 0x3020100);
+  WriteReta(79, 0x7060504);
+  WriteReta(83, 0xB0A0908);
+  WriteReta(87, 0x3020100);
+  WriteReta(91, 0x7060504);
+  WriteReta(95, 0xB0A0908);
+  WriteReta(99, 0x3020100);
+  WriteReta(103, 0x7060504);
+  WriteReta(107, 0xB0A0908);
+  WriteReta(111, 0x3020100);
+  WriteReta(115, 0x7060504);
+  WriteReta(119, 0xB0A0908);
+  WriteReta(123, 0x3020100);
+  WriteReta(127, 0x3080400);*/
+  
   for (auto i = 0; i < 128; i++) {
     WriteFtqf(i, 0x0);
     WriteSaqf(i, 0x0);
@@ -2005,6 +2054,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   rxflag = 0;
   count = 0;
   rnt = 0;
+  uint32_t mcore = static_cast<uint32_t>(Cpu::GetMine());
 
   // get address of buffer with data
   while (GetRxBuf(&len, &bAddr, &rxflag, &process_rsc, &rnt) == 0) {
@@ -2037,6 +2087,8 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
 
       ReclaimRx();
 
+      ebbrt::kprintf("\t ReceivePoll() RSC on core: %d len=%d\n", mcore, static_cast<int>(rsclen));
+      
       root_.itf_.Receive(std::move(b), rxflag);
     } else {
       // done with buffer addr above, now to reuse it
@@ -2049,7 +2101,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
 
       if (count > 0) {
         auto tail = ixgmq_.rx_tail_;
-
+	
         // TODO hack - need to set actual length of data otherwise it'll send
         // leftover 0's
         ixgmq_.circ_buffer_[tail]->SetLength(len);
@@ -2064,15 +2116,26 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
 
         ixgmq_.rx_ring_[tail].buffer_address = rxphys;
 
-        root_.itf_.Receive(std::move(b), rxflag);
+	// dump eth packet info
+	ebbrt::kprintf("\t ReceivePoll() on core: %d len=%d\n", mcore, len);
+	auto p1 = reinterpret_cast<uint8_t*>(b->MutData());
+	for (int i = 0; i < (int)len; i+=8) {
+	  if (i+8 < (int)len) {
+	    ebbrt::kprintf("%02X%02X%02X%02X%02X%02X%02X%02X\n", p1[i], p1[i+1], p1[i+2], p1[i+3], p1[i+4], p1[i+5], p1[i+6], p1[i+7]);
+	  }
+	  else{
+	    ebbrt::kprintf("%02X\n", p1[i]);
+	  }
+	}
+	root_.itf_.Receive(std::move(b), rxflag);
       }
-    }
+    } 
   }
-
+  
   // TODO: Update tail register here or above?
   if (count > 0) {
     // update reg
-    WriteRdt_1(Cpu::GetMine(), ixgmq_.rx_tail_);
+    WriteRdt_1(mcore, ixgmq_.rx_tail_);
   }
 }
 
