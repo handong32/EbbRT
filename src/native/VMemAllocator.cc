@@ -118,6 +118,22 @@ ebbrt::VMemAllocator::Alloc(size_t npages, size_t pages_align,
          npages);
 }
 
+// Recursive page table walker
+struct Frame {
+  struct Frame *next;
+  uint64_t rip;
+};
+
+void dumpFrames(int n, struct Frame *s)
+{
+  struct Frame *f;
+  int i;
+  for (i=0,f=s; i<n; f=f->next,i++) {
+    ebbrt::kprintf("FRAME[%d]: %p RIP: 0x%llx next:%p\n", -1*i, f,
+		   f->rip, f->next);  
+  }
+}
+
 void ebbrt::VMemAllocator::HandlePageFault(idt::ExceptionFrame* ef) {
   std::lock_guard<SpinLock> lock(lock_);
   auto fault_addr = ReadCr2();
