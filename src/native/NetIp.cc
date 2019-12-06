@@ -148,7 +148,7 @@ void ebbrt::NetworkManager::Interface::SendIp(std::unique_ptr<MutIOBuf> buf,
 
   pinfo.csum_start += sizeof(Ipv4Header);
   pinfo.hdr_len += sizeof(Ipv4Header);
-
+  
   EthArpSend(kEthTypeIp, ih, std::move(buf), pinfo);
 }
 

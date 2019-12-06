@@ -20,6 +20,7 @@ uint16_t IpPseudoCsum(const IOBuf& buf, uint8_t proto, Ipv4Address src,
                       Ipv4Address dst);
 uint16_t IpCsum(const IOBuf& buf);
 uint16_t IpCsum(const uint8_t* buf, size_t len);
+uint32_t CsumTest(const IOBuf& buf);
 }  // namespace ebbrt
 
 #endif  // BAREMETAL_SRC_INCLUDE_EBBRT_NETCHECKSUM_H_

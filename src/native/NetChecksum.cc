@@ -41,7 +41,7 @@ uint32_t Add32WithCarry(uint32_t a, uint32_t b) {
 }
 
 // Compute checksum over a contiguous region of memory
-uint32_t Csum(const uint8_t* buf, size_t len, size_t offset = 0) {
+uint64_t Csum(const uint8_t* buf, size_t len, size_t offset = 0) {
   if (unlikely(len == 0))
     return 0;
 
@@ -176,4 +176,8 @@ uint16_t ebbrt::IpCsum(const IOBuf& buf) { return CsumFold(IpCsumNoFold(buf)); }
 // Checksum a region of memory
 uint16_t ebbrt::IpCsum(const uint8_t* buf, size_t len) {
   return CsumFold(Csum(buf, len));
+}
+
+uint32_t ebbrt::CsumTest(const IOBuf& buf) {
+  return IpCsumNoFold(buf);
 }

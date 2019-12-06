@@ -19,6 +19,23 @@
 #include <cinttypes>
 #include <mutex>
 
+void dumpPacketContents(uint8_t* p1, uint64_t len) {
+  uint64_t i, j;
+  
+  ebbrt::kprintf_force("dumpPacketContents() len=%u\n", len);
+  for (i = 0; i < len; i+=8) {
+    if (i+8 < len) {
+      ebbrt::kprintf("%02X%02X%02X%02X%02X%02X%02X%02X\n", p1[i], p1[i+1], p1[i+2], p1[i+3], p1[i+4], p1[i+5], p1[i+6], p1[i+7]);
+    } else {
+      for(j=i;j<len;j++) {
+	ebbrt::kprintf("%02X\n", p1[j]);
+      }
+      i = len;
+      return;
+    }
+  }
+}
+
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
 
@@ -147,7 +164,7 @@ void ebbrt::IxgbeDriverRep::AddContext(uint8_t idx, uint8_t maclen,
   actx->iplen = iplen;
   actx->maclen = maclen;
 
-  actx->dytp = 0b0010;
+  actx->dtyp = 0b0010;
   actx->dext = 1;
   actx->idx = idx;
 
@@ -226,6 +243,346 @@ void ebbrt::IxgbeDriverRep::AddTx(uint64_t pa, uint64_t len,
 }
 
 void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
+  uint64_t data, len, tsodata, tsolen;
+  std::unique_ptr<MutUniqueIOBuf> b;
+  tdesc_advance_tx_rf_t* arfx;
+  tdesc_advance_ctxt_wb_t* actx;
+  uint32_t mcore = static_cast<uint32_t>(Cpu::GetMine());
+  //int i;
+
+  // On TSO, the maximum PAYLEN can be up to 2^18 - 1
+  len = buf->ComputeChainDataLength();
+  if (len > 262144) {
+    ebbrt::kprintf_force("\t kabort Send() len=%u greater than TSO limit of 262144 bytes\n", len);
+    return;
+  }
+  
+  if(buf->IsChained()) {
+    b = MakeUniqueIOBuf(len);
+    auto mdata = b->MutData();
+    for (auto& buf_it : *buf) {
+      memcpy(mdata, buf_it.Data(), buf_it.Length());
+      mdata += buf_it.Length();
+    }
+    data = reinterpret_cast<uint64_t>(b->MutData());
+  } else {
+    data = reinterpret_cast<uint64_t>(buf->Data());
+  }
+
+  // if no IP/TCP checksum
+  if (!(pinfo.flags & PacketInfo::kNeedsCsum) && !(pinfo.flags & PacketInfo::kNeedsIpCsum)) {
+    arfx = reinterpret_cast<tdesc_advance_tx_rf_t*>(&(ixgmq_.tx_ring_[ixgmq_.tx_tail_]));
+    arfx->raw[0] = 0x0;
+    arfx->raw[1] = 0x0;
+    
+    arfx->address = data;
+
+    // Holds length in bytes of data buffer at the address pointed to by this specific descriptor.
+    // Max length is 15.5 KB
+    arfx->dtalen = len;
+    
+    // In a single-send packet, PAYLEN defines the entire packet size fetched from host memory.
+    arfx->paylen = len;
+    
+    // crc checksum
+    arfx->ifcs = 1;
+    
+    // rs bit should only be set when eop is set
+    arfx->eop = 1;
+    arfx->rs = 1;
+    
+    // type is advanced
+    arfx->dtyp = 0x3;
+    arfx->dext = 1;
+
+    //ebbrt::kprintf("Send mcore=%u tail=%u tx_adv_rd_desc = 0x%llX 0x%X 0x%X\n", mcore, ixgmq_.tx_tail_, arfx->raw[0], (uint32_t)(arfx->raw[1] & 0xFFFFFFFF), (uint32_t)((arfx->raw[1] >> 32) & 0xFFFFFFFF));
+    ixgmq_.tx_tail_ = (ixgmq_.tx_tail_ + 1) % ixgmq_.tx_size_;
+  }
+  else {
+    if(len > IXGBE_MAX_DATA_PER_TXD) {
+      actx = reinterpret_cast<tdesc_advance_ctxt_wb_t*>(&(ixgmq_.tx_ring_[ixgmq_.tx_tail_]));
+      actx->raw_1 = 0x0;
+      actx->raw_2 = 0x0;
+      actx->iplen = IPHDR_LEN;
+      actx->maclen = ETHHDR_LEN;
+      // ip packet type = ipv4: 01
+      actx->ipv4 = 1;
+      
+      if (pinfo.csum_offset == 6) {
+	// l4type = udp: 00
+	actx->l4t = 0;
+      } else if (pinfo.csum_offset == 16) {
+	// l4type = tcp: 01
+	actx->l4t = 1;
+      } 
+      
+      // for context descriptor 0x2
+      actx->dtyp = 0x2;
+      // descriptor extension, one for advanced mode
+      actx->dext = 1;
+      // from Linux??, ignored when no TSE
+      actx->mss = 1448;
+      // TCP header length, with no tcp options == 20, ignored when no TSE
+      actx->l4len = pinfo.tcp_hdr_len;
+      //ebbrt::kprintf("Send mcore=%u tail=%u tx_adv_ctxt_desc = 0x%llX 0x%X 0x%X\n", mcore, ixgmq_.tx_tail_, actx->raw_1, (uint32_t)(actx->raw_2 & 0xFFFFFFFF), (uint32_t)((actx->raw_2 >> 32) & 0xFFFFFFFF));
+      ixgmq_.tx_tail_ = (ixgmq_.tx_tail_ + 1) % ixgmq_.tx_size_;
+
+      
+      //first descriptor
+      arfx = reinterpret_cast<tdesc_advance_tx_rf_t*>(&(ixgmq_.tx_ring_[ixgmq_.tx_tail_]));
+      arfx->raw[0] = 0x0;
+      arfx->raw[1] = 0x0;
+      arfx->address = data;
+      // Holds length in bytes of data buffer at the address pointed to by this specific descriptor.
+      // Max length is 15.5 KB
+      arfx->dtalen = IXGBE_MAX_DATA_PER_TXD;
+      arfx->dtyp = 0x3;
+      arfx->ifcs = 1;
+      arfx->dext = 1;
+      arfx->tse = 1;
+      arfx->ixsm = 1;
+      arfx->txsm = 1;
+      // In Tcp Segmentation Mode (TSE), PAYLEN defines the TCP/UDP payload length, so no header length
+      arfx->paylen = pinfo.tcp_len;
+      //ebbrt::kprintf("Send() first descriptor mcore=%u tail=%u dtalen=%u paylen=%u tx_adv_rd_desc = 0x%llX 0x%X 0x%X\n", mcore, ixgmq_.tx_tail_, IXGBE_MAX_DATA_PER_TXD, pinfo.tcp_len, arfx->raw[0], (uint32_t)(arfx->raw[1] & 0xFFFFFFFF), (uint32_t)((arfx->raw[1] >> 32) & 0xFFFFFFFF));
+      ixgmq_.tx_tail_ = (ixgmq_.tx_tail_ + 1) % ixgmq_.tx_size_;
+      
+      tsodata = data;
+      tsolen = len;
+      
+      while(tsolen > IXGBE_MAX_DATA_PER_TXD) {
+	tsodata += IXGBE_MAX_DATA_PER_TXD;
+	tsolen -= IXGBE_MAX_DATA_PER_TXD;
+
+	arfx = reinterpret_cast<tdesc_advance_tx_rf_t*>(&(ixgmq_.tx_ring_[ixgmq_.tx_tail_]));
+	arfx->raw[0] = 0x0;
+	arfx->raw[1] = 0x0;
+	arfx->dtyp = 0x3;
+	arfx->dext = 1;
+	arfx->tse = 1;
+	arfx->ifcs = 1;
+	arfx->address = tsodata;
+	
+	if(tsolen > IXGBE_MAX_DATA_PER_TXD) {
+	  arfx->dtalen = IXGBE_MAX_DATA_PER_TXD;
+	  //ebbrt::kprintf("Send() middle descriptor(s) mcore=%u tail=%u dtalen=%u tx_adv_rd_desc = 0x%llX 0x%X 0x%X\n", mcore, ixgmq_.tx_tail_, IXGBE_MAX_DATA_PER_TXD, arfx->raw[0], (uint32_t)(arfx->raw[1] & 0xFFFFFFFF), (uint32_t)((arfx->raw[1] >> 32) & 0xFFFFFFFF));
+	  ixgmq_.tx_tail_ = (ixgmq_.tx_tail_ + 1) % ixgmq_.tx_size_;
+	} else { 
+	  // last descriptor
+	  arfx->dtalen = tsolen;
+	  arfx->eop = 1;
+	  arfx->rs = 1;
+	    
+	  //ebbrt::kprintf("Send() last descriptor mcore=%u tail=%u dtalen=%u tx_adv_rd_desc = 0x%llX 0x%X 0x%X\n", mcore, ixgmq_.tx_tail_, tsolen, arfx->raw[0], (uint32_t)(arfx->raw[1] & 0xFFFFFFFF), (uint32_t)((arfx->raw[1] >> 32) & 0xFFFFFFFF));
+	  ixgmq_.tx_tail_ = (ixgmq_.tx_tail_ + 1) % ixgmq_.tx_size_;
+	}
+      }
+      
+    }
+    else if(len > 1490 && len < IXGBE_MAX_DATA_PER_TXD) {
+      actx = reinterpret_cast<tdesc_advance_ctxt_wb_t*>(&(ixgmq_.tx_ring_[ixgmq_.tx_tail_]));
+      actx->raw_1 = 0x0;
+      actx->raw_2 = 0x0;
+      actx->iplen = IPHDR_LEN;
+      actx->maclen = ETHHDR_LEN;
+      // ip packet type = ipv4: 01
+      actx->ipv4 = 1;
+      
+      if (pinfo.csum_offset == 6) {
+	// l4type = udp: 00
+	actx->l4t = 0;
+      } else if (pinfo.csum_offset == 16) {
+	// l4type = tcp: 01
+	actx->l4t = 1;
+      } 
+      
+      // for context descriptor 0b0010
+      actx->dtyp = 0x2;
+      // descriptor extension, one for advanced mode
+      actx->dext = 1;
+      // from Linux??, ignored when no TSE
+      actx->mss = 1448;
+      // TCP header length, with no tcp options == 20, ignored when no TSE
+      actx->l4len = pinfo.tcp_hdr_len;
+      //ebbrt::kprintf("Send mcore=%u tail=%u tx_adv_ctxt_desc = 0x%llX 0x%X 0x%X\n", mcore, ixgmq_.tx_tail_, actx->raw_1, (uint32_t)(actx->raw_2 & 0xFFFFFFFF), (uint32_t)((actx->raw_2 >> 32) & 0xFFFFFFFF));
+      ixgmq_.tx_tail_ = (ixgmq_.tx_tail_ + 1) % ixgmq_.tx_size_;
+
+      arfx = reinterpret_cast<tdesc_advance_tx_rf_t*>(&(ixgmq_.tx_ring_[ixgmq_.tx_tail_]));
+      arfx->raw[0] = 0x0;
+      arfx->raw[1] = 0x0;
+      arfx->address = data;
+      
+      // Holds length in bytes of data buffer at the address pointed to by this specific descriptor.
+      // Max length is 15.5 KB
+      arfx->dtalen = len;
+      arfx->dtyp = 0x3;
+      arfx->eop = 1;
+      arfx->rs = 1;
+      arfx->ifcs = 1;
+      arfx->dext = 1;
+      arfx->tse = 1;
+      
+      arfx->ixsm = 1;
+      arfx->txsm = 1;
+      // In Tcp Segmentation Mode (TSE), PAYLEN defines the TCP/UDP payload size
+      arfx->paylen = pinfo.tcp_len;
+      //ebbrt::kprintf("Send mcore=%u tail=%u dtalen=%u paylen=%u tx_adv_rd_desc = 0x%llX 0x%X 0x%X\n", mcore, ixgmq_.tx_tail_, len, pinfo.tcp_len, arfx->raw[0], (uint32_t)(arfx->raw[1] & 0xFFFFFFFF), (uint32_t)((arfx->raw[1] >> 32) & 0xFFFFFFFF));
+      ixgmq_.tx_tail_ = (ixgmq_.tx_tail_ + 1) % ixgmq_.tx_size_;
+    } else {
+      actx = reinterpret_cast<tdesc_advance_ctxt_wb_t*>(&(ixgmq_.tx_ring_[ixgmq_.tx_tail_]));
+      actx->raw_1 = 0x0;
+      actx->raw_2 = 0x0;
+      actx->iplen = IPHDR_LEN;
+      actx->maclen = ETHHDR_LEN;
+      // ip packet type = ipv4: 01
+      actx->ipv4 = 1;
+      
+      if (pinfo.csum_offset == 6) {
+	// l4type = udp: 00
+	actx->l4t = 0;
+      } else if (pinfo.csum_offset == 16) {
+	// l4type = tcp: 01
+	actx->l4t = 1;
+      } 
+      
+      // for context descriptor 0b0010
+      actx->dtyp = 0x2;
+      // descriptor extension, one for advanced mode
+      actx->dext = 1;
+      // from Linux, ignored when no TSE
+      actx->mss = 0;
+      // TCP header length, with no tcp options == 20, ignored when no TSE
+      actx->l4len = 0;    
+      //ebbrt::kprintf("Send mcore=%u tail=%u tx_adv_ctxt_desc = 0x%llX 0x%X 0x%X\n", mcore, ixgmq_.tx_tail_, actx->raw_1, (uint32_t)(actx->raw_2 & 0xFFFFFFFF), (uint32_t)((actx->raw_2 >> 32) & 0xFFFFFFFF));
+      ixgmq_.tx_tail_ = (ixgmq_.tx_tail_ + 1) % ixgmq_.tx_size_;
+      
+      arfx = reinterpret_cast<tdesc_advance_tx_rf_t*>(&(ixgmq_.tx_ring_[ixgmq_.tx_tail_]));
+      arfx->raw[0] = 0x0;
+      arfx->raw[1] = 0x0;
+      arfx->address = data;
+      
+      // Holds length in bytes of data buffer at the address pointed to by this specific descriptor.
+      // Max length is 15.5 KB
+      arfx->dtalen = len;
+      arfx->paylen = len;
+      
+      arfx->dtyp = 0x3;
+      arfx->eop = 1;
+      arfx->ifcs = 1;
+      
+      arfx->rs = 1;
+      
+      arfx->dext = 1;
+      arfx->tse = 0;
+      
+      arfx->ixsm = 1;
+      
+      // if need TCP checksum offload
+      //if (pinfo.flags & PacketInfo::kNeedsCsum) {
+      arfx->txsm = 1;
+	//}
+      //ebbrt::kprintf("Send mcore=%u tail=%u tx_adv_rd_desc = 0x%llX 0x%X 0x%X\n", mcore, ixgmq_.tx_tail_, arfx->raw[0], (uint32_t)(arfx->raw[1] & 0xFFFFFFFF), (uint32_t)((arfx->raw[1] >> 32) & 0xFFFFFFFF));
+      ixgmq_.tx_tail_ = (ixgmq_.tx_tail_ + 1) % ixgmq_.tx_size_;
+    }
+  }
+  /*if(len > 1448) {
+    //dumpPacketContents(reinterpret_cast<uint8_t*>(data), len);
+    //ebbrt::kabort("kabort Send()\n");
+    actx = reinterpret_cast<tdesc_advance_ctxt_wb_t*>(&(ixgmq_.tx_ring_[ixgmq_.tx_tail_]));
+    actx->raw_1 = 0x0;
+    actx->raw_2 = 0x0;
+    actx->iplen = IPHDR_LEN;
+    actx->maclen = ETHHDR_LEN;
+    // ip packet type = ipv4: 01
+    actx->ipv4 = 1;
+    // l4type = tcp: 01
+    actx->l4t = 1;
+    // for context descriptor 0b0010
+    actx->dtyp = 0x2;
+    // descriptor extension, one for advanced mode
+    actx->dext = 1;
+    // from Linux
+    actx->mss = 1448;
+    // TCP header length, with no tcp options == 20
+    actx->l4len = pinfo.tcp_hdr_len;
+    
+    ebbrt::kprintf("Send mcore=%u tail=%u tx_adv_ctxt_desc = 0x%llX 0x%X 0x%X\n", mcore, ixgmq_.tx_tail_, actx->raw_1, (uint32_t)(actx->raw_2 & 0xFFFFFFFF), (uint32_t)((actx->raw_2 >> 32) & 0xFFFFFFFF));
+    
+    ixgmq_.tx_tail_ = (ixgmq_.tx_tail_ + 1) % ixgmq_.tx_size_;
+    
+    arfx = reinterpret_cast<tdesc_advance_tx_rf_t*>(&(ixgmq_.tx_ring_[ixgmq_.tx_tail_]));
+    arfx->raw[0] = 0x0;
+    arfx->raw[1] = 0x0;
+    arfx->address = data;
+    
+    // Holds length in bytes of data buffer at the address pointed to by this specific descriptor.
+    // Max length is 15.5 KB
+    arfx->dtalen = len;
+    arfx->dtyp = 0x3;
+    arfx->eop = 1;
+    arfx->rs = 1;
+    arfx->ifcs = 1;
+    arfx->dext = 1;
+    arfx->tse = 1;
+    
+    arfx->ixsm = 1;
+    arfx->txsm = 1;
+    // In Tcp Segmentation Mode (TSE), PAYLEN defines the TCP/UDP payload size
+    arfx->paylen = pinfo.tcp_len;
+    
+    ebbrt::kprintf("Send mcore=%u tail=%u tx_adv_rd_desc = 0x%llX 0x%X 0x%X\n", mcore, ixgmq_.tx_tail_, arfx->raw[0], (uint32_t)(arfx->raw[1] & 0xFFFFFFFF), (uint32_t)((arfx->raw[1] >> 32) & 0xFFFFFFFF));
+    ixgmq_.tx_tail_ = (ixgmq_.tx_tail_ + 1) % ixgmq_.tx_size_;
+    //ebbrt::kabort("Exiting\n");
+    
+  } else {
+  arfx = reinterpret_cast<tdesc_advance_tx_rf_t*>(&(ixgmq_.tx_ring_[ixgmq_.tx_tail_]));
+    arfx->raw[0] = 0x0;
+    arfx->raw[1] = 0x0;
+    
+    arfx->address = data;
+
+    // Holds length in bytes of data buffer at the address pointed to by this specific descriptor.
+    // Max length is 15.5 KB
+    arfx->dtalen = len;
+    
+    // In a single-send packet, PAYLEN defines the entire packet size fetched from host memory.
+    arfx->paylen = len;
+    
+    // crc checksum
+    arfx->ifcs = 1;
+    
+    // rs bit should only be set when eop is set
+    arfx->eop = 1;
+    arfx->rs = 1;
+    
+    // type is advanced
+    arfx->dtyp = 0x3;
+    arfx->dext = 1;
+
+    ebbrt::kprintf("Send mcore=%u tail=%u tcp_hdr_len=%u tcp_len=%u tx_adv_rd_desc = 0x%llX 0x%X 0x%X\n", mcore, ixgmq_.tx_tail_, pinfo.tcp_hdr_len, pinfo.tcp_len, arfx->raw[0], (uint32_t)(arfx->raw[1] & 0xFFFFFFFF), (uint32_t)((arfx->raw[1] >> 32) & 0xFFFFFFFF));
+    ixgmq_.tx_tail_ = (ixgmq_.tx_tail_ + 1) % ixgmq_.tx_size_;
+    }*/
+
+  
+  // Force memory writes to complete before letting h/w know there
+  //  are new descriptors to fetch.  (Only applicable for weak-ordered
+  //  memory model archs, such as IA-64).
+  asm volatile("sfence" ::: "memory");
+  
+  WriteTdt_1(mcore, ixgmq_.tx_tail_);
+
+  // keep looping until processed
+  while(arfx->dd == 0) {
+    // makes sure all reads are finished before checking again
+    asm volatile("lfence":::"memory");
+  }
+  
+  //rtdh = ReadTdh_1(mcore);
+  //rtdt = ReadTdt_1(mcore);
+  //ebbrt::kprintf("\t Send() core=%u After len=%d rtdh=%u %rtdt=%u tail=%u\n\n", mcore, len, rtdh, rtdt, ixgmq_.tx_tail_);
+}
+
+/*void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   bool ip_cksum = false;
   bool tcpudp_cksum = false;
   uint64_t data;
@@ -251,12 +608,13 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
                 (std::abs(static_cast<int>(ixgmq_.tx_tail_ - ixgmq_.tx_head_)));
     // not enough descriptors got freed
     if (free_desc < (count + 1)) {
+      ebbrt::kprintf("Not enough descriptors got freed\n");
       return;
     }
   }
 #endif
 
-  if (pinfo.flags & PacketInfo::kNeedsIpCsum) {
+if (pinfo.flags & PacketInfo::kNeedsIpCsum) {
     ip_cksum = true;
   }
   
@@ -270,11 +628,12 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     count = buf->CountChainElements();
     
     if(tcpudp_cksum) {
-      if (pinfo.csum_offset == 6) {
-	AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_udp);
+    if (pinfo.csum_offset == 6) {
+      AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_udp);
       } else if (pinfo.csum_offset == 16) {
 	AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_tcp);
       } else {
+	ebbrt::kprintf("%s unknown packet type checksum\n", __FUNCTION__);
 	ebbrt::kabort("%s unknown packet type checksum\n", __FUNCTION__);
       }
     }
@@ -319,7 +678,6 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   } else { // buffers NOT chained
     data = reinterpret_cast<uint64_t>(buf->Data());
     len = buf->ComputeChainDataLength();
-
     if(tcpudp_cksum) {
       // check datasheet for numbers
       if (pinfo.csum_offset == 6) {
@@ -336,7 +694,9 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     }
     
     // dump eth packet info
-    ebbrt::kprintf("\t Send() on core: %d len=%d\n", mcore, len);
+    auto rtdh = ReadTdh_1(mcore);
+    auto rtdt = ReadTdt_1(mcore);
+    ebbrt::kprintf("\t Send() Before len=%d rtdh=%u %rtdt=%u tx_tail_=%u\n", len, rtdh, rtdt, (uint32_t)(ixgmq_.tx_tail_));
     auto p1 = reinterpret_cast<uint8_t*>(data);
     for (int i = 0; i < (int)len; i+=8) {
       if (i+8 < (int)len) {
@@ -351,10 +711,100 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   
   // bump tx_tail
   // indicates position beyond last descriptor hw
-  size_t tail = ixgmq_.tx_tail_;
-  WriteTdt_1(mcore, tail);
-}
+  uint32_t tail = (uint32_t)(ixgmq_.tx_tail_);
+  asm volatile("sfence" ::: "memory");
 
+  WriteTdt_1(mcore, tail);
+
+  tdesc_advance_tx_rf_t* actx;
+  actx = reinterpret_cast<tdesc_advance_tx_rf_t*>(&(ixgmq_.tx_ring_[tail-1]));
+  
+  while(actx->dd == 0) {
+    ebbrt::clock::SleepMilli(1);
+  }
+  auto rtdh = ReadTdh_1(mcore);
+  auto rtdt = ReadTdt_1(mcore);
+  ebbrt::kprintf("\t Send() After len=%d rtdh=%u %rtdt=%u tail=%u\n\n", len, rtdh, rtdt, tail);
+  }*/
+/*void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
+  bool ip_cksum = false;
+  bool tcpudp_cksum = false;
+  uint64_t data;
+  size_t len;
+  uint32_t mcore = static_cast<uint32_t>(Cpu::GetMine());
+  std::unique_ptr<MutUniqueIOBuf> b;
+
+  if (pinfo.flags & PacketInfo::kNeedsIpCsum) {
+    ip_cksum = true;
+  }
+  
+  if (pinfo.flags & PacketInfo::kNeedsCsum) {
+    tcpudp_cksum = true;
+  }
+
+  len = buf->ComputeChainDataLength();
+  
+  // buffers are chained
+  if(buf->IsChained()) {
+    b = MakeUniqueIOBuf(len);
+    auto mdata = b->MutData();
+    for (auto& buf_it : *buf) {
+      memcpy(mdata, buf_it.Data(), buf_it.Length());
+      mdata += buf_it.Length();
+    }
+    data = reinterpret_cast<uint64_t>(b->MutData());
+  } else { // buffers NOT chained
+    data = reinterpret_cast<uint64_t>(buf->Data());
+  }
+  
+  if(tcpudp_cksum) {
+    // check datasheet for numbers
+    if (pinfo.csum_offset == 6) {
+      AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_udp);
+    } else if (pinfo.csum_offset == 16) {
+      AddContext(0, ETHHDR_LEN, IPHDR_LEN, 0, l4_type_tcp);
+    } else {
+      ebbrt::kabort("%s unknown packet type checksum\n", __FUNCTION__);
+    }
+    
+    AddTx(data, len, len, true, true, 0, ip_cksum, tcpudp_cksum, len > 1514, static_cast<int>(pinfo.hdr_len));
+  } else {
+    AddTx(data, len, len, true, true, 0, ip_cksum, tcpudp_cksum, len > 1514, static_cast<int>(pinfo.hdr_len));
+  }
+
+  // dump eth packet info
+  auto rtdh = ReadTdh_1(mcore);
+  auto rtdt = ReadTdt_1(mcore);
+  ebbrt::kprintf("\t Core=%u Send() Before len=%d rtdh=%u %rtdt=%u tx_tail_=%u\n", mcore, len, rtdh, rtdt, (uint32_t)(ixgmq_.tx_tail_));
+  auto p1 = reinterpret_cast<uint8_t*>(data);
+  for (int i = 0; i < (int)len; i+=8) {
+    if (i+8 < (int)len) {
+      ebbrt::kprintf("%02X%02X%02X%02X%02X%02X%02X%02X \n", p1[i], p1[i+1], p1[i+2], p1[i+3], p1[i+4], p1[i+5], p1[i+6], p1[i+7]);
+    }
+    else{
+      ebbrt::kprintf("%02X \n", p1[i]);
+    }
+  }
+  ebbrt::kprintf("\n");
+  
+  // bump tx_tail
+  // indicates position beyond last descriptor hw
+  uint32_t tail = (uint32_t)(ixgmq_.tx_tail_);
+  asm volatile("sfence" ::: "memory");
+
+  WriteTdt_1(mcore, tail);
+
+  tdesc_advance_tx_rf_t* actx;
+  actx = reinterpret_cast<tdesc_advance_tx_rf_t*>(&(ixgmq_.tx_ring_[tail-1]));
+  
+  while(actx->dd == 0) {
+    ebbrt::clock::SleepMilli(1);
+  }
+  rtdh = ReadTdh_1(mcore);
+  rtdt = ReadTdt_1(mcore);
+  ebbrt::kprintf("\t Send() After len=%d rtdh=%u %rtdt=%u tail=%u\n\n", len, rtdh, rtdt, tail);
+  }
+*/
 
 void ebbrt::IxgbeDriver::WriteRxctrl(uint32_t m) {
   // Disable RXCTRL - 8.2.3.8.10
@@ -372,9 +822,15 @@ void ebbrt::IxgbeDriver::WriteDmatxctl(uint32_t m) {
 }
 void ebbrt::IxgbeDriver::WriteDmatxctl_te(uint32_t m) {
   auto reg = bar0_.Read32(0x04A80);
+  ebbrt::kprintf("DMATXCTL= 0x%X\n", reg | m);
   bar0_.Write32(0x04A80, reg | m);
 }
 
+//8.2.3.5.10 Extended Interrupt Auto Mask Enable registers — EIAM[n] (0x00AD0 + 4*(n-1), n=1...2; RW)
+void ebbrt::IxgbeDriver::WriteEiam(uint32_t n, uint32_t m) {
+  bar0_.Write32(0x00AD0 + 4*n, m);
+}
+  
 // 8.2.3.5.18 - General Purpose Interrupt Enable — GPIE (0x00898; RW)
 void ebbrt::IxgbeDriver::WriteGpie(uint32_t m) {
   auto reg = bar0_.Read32(0x00898);
@@ -487,8 +943,9 @@ void ebbrt::IxgbeDriver::ReadCtrl() {
 
 // 8.2.3.1.3 Extended Device Control Register — CTRL_EXT (0x00018; RW)
 void ebbrt::IxgbeDriver::WriteCtrlExt(uint32_t m) {
-  auto reg = bar0_.Read32(0x00018);
-  bar0_.Write32(0x00018, reg | m);
+  //auto reg = bar0_.Read32(0x00018);
+  //bar0_.Write32(0x00018, reg | m);
+  bar0_.Write32(0x00018, m);
 }
 
 // 8.2.3.7.1 Filter Control Register — FCTRL (0x05080; RW)
@@ -787,6 +1244,10 @@ void ebbrt::IxgbeDriver::WriteDcaTxctrlTxdescWbro(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x0600C + 0x40 * n);
   bar0_.Write32(0x0600C + 0x40 * n, reg & m);
 }
+void ebbrt::IxgbeDriver::ReadDcaTxctrl(uint32_t n) {
+  auto reg = bar0_.Read32(0x0600C + 0x40 * n);
+  ebbrt::kprintf("DCA_TXCTRL=0x%X\n", reg);
+}
 
 // 8.2.3.11.1 Rx DCA Control Register — DCA_RXCTRL[n] (0x0100C + 0x40*n,
 // n=0...63 and 0x0D00C + 0x40*(n-64),
@@ -795,8 +1256,11 @@ void ebbrt::IxgbeDriver::WriteDcaRxctrl_1(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x0100C + 0x40 * n);
   bar0_.Write32(0x0100C + 0x40 * n, reg & m);
 }
+void ebbrt::IxgbeDriver::ReadDcaRxctrl(uint32_t n) {
+  auto reg = bar0_.Read32(0x0100C + 0x40 * n);
+  ebbrt::kprintf("DCA_RXCTRL=0x%X\n", reg);
+}
 
-// void ebbrt::IxgbeDriver::WriteDcaRxctrl_1_RxdataWrro(uint32_t n, uint32_t m);
 void ebbrt::IxgbeDriver::WriteDcaRxctrl_2(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x0D00C + 0x40 * n);
   bar0_.Write32(0x0D00C + 0x40 * n, reg & m);
@@ -804,8 +1268,9 @@ void ebbrt::IxgbeDriver::WriteDcaRxctrl_2(uint32_t n, uint32_t m) {
 
 // 8.2.3.7.5 Receive Checksum Control — RXCSUM (0x05000; RW)
 void ebbrt::IxgbeDriver::WriteRxcsum(uint32_t m) {
-  auto reg = bar0_.Read32(0x05000);
-  bar0_.Write32(0x05000, reg | m);
+  //auto reg = bar0_.Read32(0x05000);
+  //bar0_.Write32(0x05000, reg | m);
+  bar0_.Write32(0x05000, m);
 }
 
 // 8.2.3.8.13 RSC Control — RSCCTL[n] (0x0102C + 0x40*n, n=0...63
@@ -818,19 +1283,22 @@ void ebbrt::IxgbeDriver::WriteRscctl(uint32_t n, uint32_t m) {
 // 8.2.3.7.4 Packet Split Receive Type Register — PSRTYPE[n]
 // (0x0EA00 + 4*n, n=0...63 / 0x05480 + 4*n, n=0...15; RW)
 void ebbrt::IxgbeDriver::WritePsrtype(uint32_t n, uint32_t m) {
-  auto reg = bar0_.Read32(0x0EA00 + 0x40 * n);
+  //auto reg = bar0_.Read32(0x0EA00 + 0x40 * n);
+  auto reg = bar0_.Read32(0x05480 + 0x40 * n);
   bar0_.Write32(0x0EA00 + 0x40 * n, reg | m);
 }
 
 void ebbrt::IxgbeDriver::WritePsrtypeZero(uint32_t n) {
-  bar0_.Write32(0x0EA00 + 0x40 * n, 0x0);
+  //bar0_.Write32(0x0EA00 + 0x40 * n, 0x0);
+  bar0_.Write32(0x05480, n);
 }
 
 // 8.2.3.7.15 Redirection Table — RETA[n] (0x0EB00 + 4*n, n=0...31/ 0x05C00 +
 // 4*n, n=0...31; RW)
 void ebbrt::IxgbeDriver::WriteReta(uint32_t n, uint32_t m) {
-  bar0_.Write32(0x0EB00 + 4 * n, m);
-  ebbrt::kprintf("WriteReta(n=%d) = 0x%08X\n", n, m);
+  //bar0_.Write32(0x0EB00 + 4 * n, m);
+  bar0_.Write32(0x05C00 + 4 * n, m);
+  ebbrt::kprintf("WriteReta(n=%d) %X = 0x%08X\n", n, 0x05C00 + 4 * n, m);
 }
 
 // 8.2.3.7.6 Receive Filter Control Register — RFCTL (0x05008; RW)
@@ -845,8 +1313,9 @@ void ebbrt::IxgbeDriver::WriteTxpbthresh(uint32_t n, uint32_t m) {
 // 8.2.3.7.12 Multiple Receive Queues Command Register- MRQC (0x0EC80 / 0x05818;
 // RW)
 void ebbrt::IxgbeDriver::WriteMrqc(uint32_t m) {
-  auto reg = bar0_.Read32(0x0EC80);
-  bar0_.Write32(0x0EC80, reg | m);
+  //auto reg = bar0_.Read32(0x0EC80);
+  //bar0_.Write32(0x0EC80, reg | m);
+  bar0_.Write32(0x05818, m);
 }
 
 // 8.2.3.9.15 Multiple Transmit Queues Command Register — MTQC (0x08120; RW)
@@ -1006,6 +1475,9 @@ uint16_t ebbrt::IxgbeDriver::ReadTdh(uint32_t n) {
   auto reg = bar0_.Read32(0x06010 + 0x40 * n);
   return reg & 0xFFFF;
 }
+uint32_t ebbrt::IxgbeDriver::ReadTdt(uint32_t n) {
+  return bar0_.Read32(0x06018 + 0x40 * n) & 0xFFFF;
+}
 
 // 8.2.3.9.11 Tx Descriptor Completion Write Back Address Low —
 // TDWBAL[n] (0x06038+0x40*n, n=0...127; RW)
@@ -1036,8 +1508,8 @@ void ebbrt::IxgbeDriver::WriteRdlen_2(uint32_t n, uint32_t m) {
 // n=0...63 and 0x0D014 + 0x40*(n-64), n=64...127 / 0x02100 + 4*n, [n=0...15];
 // RW)
 void ebbrt::IxgbeDriver::WriteSrrctl_1(uint32_t n, uint32_t m) {
-  auto reg = bar0_.Read32(0x01014 + 0x40 * n);
-  bar0_.Write32(0x01014 + 0x40 * n, reg | m);
+  //auto reg = bar0_.Read32(0x01014 + 0x40 * n);
+  bar0_.Write32(0x01014 + 0x40 * n, m);
 }
 void ebbrt::IxgbeDriver::WriteSrrctlZero(uint32_t n) {
   bar0_.Write32(0x01014 + 0x40 * n, 0x0);
@@ -1045,8 +1517,8 @@ void ebbrt::IxgbeDriver::WriteSrrctlZero(uint32_t n) {
 
 // 8.2.3.8.12 RSC Data Buffer Control Register — RSCDBU (0x03028; RW)
 void ebbrt::IxgbeDriver::WriteRscdbu(uint32_t m) {
-  auto reg = bar0_.Read32(0x03028);
-  bar0_.Write32(0x03028, reg | m);
+  //auto reg = bar0_.Read32(0x03028);
+  bar0_.Write32(0x03028, m);
 }
 
 void ebbrt::IxgbeDriver::WriteSrrctl_1_desctype(uint32_t n, uint32_t m) {
@@ -1090,8 +1562,8 @@ void ebbrt::IxgbeDriver::WriteTxpbThresh(uint32_t n, uint32_t m) {
 
 // 8.2.3.22.8 MAC Core Control 0 Register — HLREG0 (0x04240; RW)
 void ebbrt::IxgbeDriver::WriteHlreg0(uint32_t m) {
-  auto reg = bar0_.Read32(0x04240);
-  bar0_.Write32(0x04240, reg | m);
+  //auto reg = bar0_.Read32(0x04240);
+  bar0_.Write32(0x04240, m);
 }
 
 // 8.2.3.8.5 Receive Descriptor Tail — RDT[n] (0x01018 + 0x40*n, n=0...63 and
@@ -1133,10 +1605,12 @@ void ebbrt::IxgbeDriver::SwfwSemRelease() {
 void ebbrt::IxgbeDriver::WriteIvarAlloc0(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x00900 + 4 * n);
   bar0_.Write32(0x00900 + 4 * n, reg | m);
+  ebbrt::kprintf("IVAR: 0x%X 0x%X\n", 0x00900 + 4 * n, reg | m);
 }
 void ebbrt::IxgbeDriver::WriteIvarAllocval0(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x00900 + 4 * n);
   bar0_.Write32(0x00900 + 4 * n, reg | m);
+  ebbrt::kprintf("IVAR: 0x%X 0x%X\n", 0x00900 + 4 * n, reg | m);
 }
 
 void ebbrt::IxgbeDriver::WriteIvarAlloc1(uint32_t n, uint32_t m) {
@@ -1151,10 +1625,12 @@ void ebbrt::IxgbeDriver::WriteIvarAllocval1(uint32_t n, uint32_t m) {
 void ebbrt::IxgbeDriver::WriteIvarAlloc2(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x00900 + 4 * n);
   bar0_.Write32(0x00900 + 4 * n, reg | m);
+  ebbrt::kprintf("IVAR: 0x%X 0x%X\n", 0x00900 + 4 * n, reg | m);
 }
 void ebbrt::IxgbeDriver::WriteIvarAllocval2(uint32_t n, uint32_t m) {
   auto reg = bar0_.Read32(0x00900 + 4 * n);
   bar0_.Write32(0x00900 + 4 * n, reg | m);
+  ebbrt::kprintf("IVAR: 0x%X 0x%X\n", 0x00900 + 4 * n, reg | m);
 }
 
 void ebbrt::IxgbeDriver::WriteIvarAlloc3(uint32_t n, uint32_t m) {
@@ -1169,8 +1645,8 @@ void ebbrt::IxgbeDriver::WriteIvarAllocval3(uint32_t n, uint32_t m) {
 // 8.2.3.10.2 DCB Transmit Descriptor Plane Control and Status — RTTDCS
 // (0x04900; RW) DMA-Tx
 void ebbrt::IxgbeDriver::WriteRttdcs(uint32_t m) {
-  auto reg = bar0_.Read32(0x04900);
-  bar0_.Write32(0x04900, reg | m);
+  //auto reg = bar0_.Read32(0x04900);
+  bar0_.Write32(0x04900, m);
 }
 void ebbrt::IxgbeDriver::WriteRttdcsArbdisEn(uint32_t m) {
   auto reg = bar0_.Read32(0x04900);
@@ -1182,12 +1658,13 @@ void ebbrt::IxgbeDriver::WriteRttpcs(uint32_t m) { bar0_.Write32(0x0CD00, m); }
 
 // 8.2.3.12.5 Security Rx Control — SECRXCTRL (0x08D00; RW)
 void ebbrt::IxgbeDriver::WriteSecrxctrl_Rx_Dis(uint32_t m) {
-  auto reg = bar0_.Read32(0x08D00);
+  bar0_.Write32(0x08D00, m);
+  /*auto reg = bar0_.Read32(0x08D00);
   if (m) {
     bar0_.Write32(0x08D00, reg | m);
   } else {
     bar0_.Write32(0x08D00, reg & ~(0x1 << 1));
-  }
+    }*/
 }
 
 // 8.2.3.12.6 Security Rx Status — SECRXSTAT (0x08D04; RO)
@@ -1290,7 +1767,8 @@ void ebbrt::IxgbeDriver::StopDevice() {
   WriteDmatxctl(0xFFFFFFFE);
 
   // disable interrupts
-  WriteEimc(0x7FFFFFFF);
+  //WriteEimc(0x7FFFFFFF);
+  WriteEimc(0xFFFFFFFF);
   ReadEicr();
 
   // disable each rx and tx queue
@@ -1356,15 +1834,20 @@ void ebbrt::IxgbeDriver::Init() {
   ebbrt::clock::SleepMilli(250);
 
   // disable interrupts
-  WriteEimc(0x7FFFFFFF);
+  //WriteEimc(0x7FFFFFFF);
+  WriteEimc(0xFFFFFFFF);
   ReadEicr();
 
   // Let firmware know we have taken over
-  WriteCtrlExt(0x1 << 28);  // DRV_LOAD
+  //WriteCtrlExt(0x1 << 28);  // DRV_LOAD
+  WriteCtrlExt(0x10010000);  // DRV_LOAD and NS_DIS
 
+  //If legacy descriptors are used, this bit should be set to 1b.
   // No snoop disable from FreeBSD ??
-  WriteCtrlExt(0x1 << 16);  // NS_DIS
-
+//#ifndef RSC_EN
+//  WriteCtrlExt(0x1 << 16);  // NS_DIS
+//#endif
+  
   // Initialize flow-control registers
   for (auto i = 0; i < 8; i++) {
     if (i < 4) {
@@ -1410,16 +1893,23 @@ void ebbrt::IxgbeDriver::Init() {
   // clears on read
   WriteEicr(0xFFFFFFFF);
 
+  /*
+   * use EIAM to auto-mask when MSI-X interrupt is asserted
+   * this saves a register write for every interrupt
+   */
+  //WriteEiam(0, 0xFFFFFFFF);
+  //WriteEiam(1, 0xFFFFFFFF);
+  
   /* setup msix */
   // switch to msix mode
-  WriteGpie(0x1 << 4);  // Multiple_MSIX
-  WriteGpie(0x1 << 31);  // PBA_support
+  WriteGpie(0x1 << 4);  // Multiple_MSIX  
   WriteGpie(0x1 << 5);  // OCD
-
-  // TODO: Set up management interrupt handler
-
+  WriteGpie(0x1 << 31);  // PBA_support
   // Enable auto masking of interrupt
   WriteGpie(0x1 << 30);  // EIAME
+  
+  // TODO: Set up management interrupt handler
+
 
 #ifdef RSC_EN
   // TODO: RSC delay value, just a guess at (1 + 1) * 4us = 8 us
@@ -1484,25 +1974,29 @@ void ebbrt::IxgbeDriver::Init() {
   // TODO VLNCTRL
   WriteMcstctrl(0x0);
 
-#ifndef RSC_EN
-  WriteRxcsum(0x1 << 12);  // IP payload checksum enable
-#else
+//#ifndef RSC_EN
+  //WriteRxcsum(0x1 << 12);  // IP payload checksum enable
+  //WriteRxcsum(0x3 << 12);  // IP payload checksum enable
+  WriteRxcsum(0x3000);
+//#else
   // note: PCSD: The Fragment Checksum and IP Identification fields are mutually exclusive with
   // the RSS hash. Only one of the two options is reported in the Rx descriptor.
-  WriteRxcsum(0x2000);
-#endif
+//  WriteRxcsum(0x2000);
+//#endif
 // TODO RQTC
 
 #ifdef RSC_EN
-  WriteRfctl(0x0);
+  WriteRfctl(0xC0);
 #else
-  WriteRfctl(0x1 << 5);
+  WriteRfctl(0xE0);
 #endif
 
   for (auto i = 0; i < 256; i++) {
     WriteMpsar(i, 0x0);
   }
 
+  // !! Support for RSS is not provided when legacy receive descriptor format is used.
+  
   // RSSRK - random seeds taken from Linux
   WriteRssrk(0, 0xA38DD80F);
   WriteRssrk(1, 0xD107C3DC);
@@ -1518,14 +2012,27 @@ void ebbrt::IxgbeDriver::Init() {
   // Fill in RSS redirection table (128 entries), sets which core the lowest 7 bits of hashed output goes to
   // hacky atm
   for (auto i = 0; i < 32; i += 4) {
+    if(ncore > 0) {
+      //WriteReta(i, 0x0000000);
+      //WriteReta(i+1, 0x0000000);
+      //WriteReta(i+2, 0x0000000);
+      //WriteReta(i+3, 0x0000000);
+      WriteReta(i, 0x03020100);
+      WriteReta(i+1, 0x07060504); 
+      WriteReta(i+2, 0x0B0A0908);
+      WriteReta(i+3, 0x0F0E0D0C);
+    }
+    /*if(ncore > 0) {
+      WriteReta(i, 0x01010101);
+      }*/
     // all route to core 0
-    if(ncore == 1) {
+    /*if(ncore == 1) {
       WriteReta(i, 0x0000000);
       WriteReta(i+1, 0x0000000);
       WriteReta(i+2, 0x0000000);
       WriteReta(i+3, 0x0000000);
     } else if(ncore == 2) {
-      WriteReta(i, 0x1010100);
+    WriteReta(i, 0x1010100);
       WriteReta(i+1, 0x1010100);
       WriteReta(i+2, 0x1010100);
       WriteReta(i+3, 0x1010100);
@@ -1540,13 +2047,13 @@ void ebbrt::IxgbeDriver::Init() {
       WriteReta(i+2, 0x3020100);
       WriteReta(i+3, 0x7060504);
     } else {
-      WriteReta(i, 0x3020100); //8
+    WriteReta(i, 0x3020100); //8
       WriteReta(i+1, 0x7060504); //8
       WriteReta(i+2, 0xB0A0908); // 8
       //WriteReta(i+3, 0x3020100);
       //WriteReta(i+2, 0xB0A0908);
       //WriteReta(i+3, 0xF0E0D0C);
-    }
+    }*/
   }
 
   //temp
@@ -1597,11 +2104,15 @@ void ebbrt::IxgbeDriver::Init() {
   // Make sure RX CRC strip enabled in HLREG0 and RDRXCTL
   WriteRdrxctlRSCFRSTSIZE(~(0x1F << 17));  // s/w set to 0
   WriteRdrxctl(0x1 << 1);  // CRCStrip
-  WriteHlreg0(0x1 << 1);  // CRCStrip
+  //WriteHlreg0(0x1 << 1);  // CRCStrip
+  WriteHlreg0(0x2FFF);  // CRCStrip
   WriteRdrxctl(0x1 << 25);  // RSCACKC s/w set to 1
   WriteRdrxctl(0x1 << 26);  // FCOE_WRFIX s/w set to 1
-  // TODO RSCDBU
 
+  // Disable RSC for ACK Packets, disables the coalescing of TCP packets without TCP payload.
+  // This bit should be set if performance problems are found.
+  WriteRscdbu(0xa0);
+  
   /***** END RX FILTER *****/
 
   // Configure buffers etc. according to specification
@@ -1612,7 +2123,8 @@ void ebbrt::IxgbeDriver::Init() {
    * to the DCB and virtualization modes (see Section 4.6.11.3).
    * Clear RTTDCS.ARBDIS to 0b.
    */
-  WriteRttdcs(0x1 << 6);
+  //WriteRttdcs(0x1 << 6);
+  WriteRttdcs(0xC00040);
   WriteDtxmxszrq(MAX_BYTES_NUM_REQ);
   WriteTxpbsize(0, 0xA0 << 10);
   WriteTxpbThresh(0, 0xA0);
@@ -1622,7 +2134,8 @@ void ebbrt::IxgbeDriver::Init() {
   }
   WriteMtqc(0x0);
   WriteMngtxmap(0x0);
-  WriteRttdcsArbdisEn(~(0x1 << 6));
+  WriteRttdcs(0xC00000);
+  //WriteRttdcsArbdisEn(~(0x1 << 6));
 
   /* Receive Init: Program RXPBSIZE, MRQC, PFQDE, RTRUP2TC, MFLCN.RPFCE,
    * and MFLCN.RFCE according to the DCB and virtualization modes
@@ -1642,7 +2155,7 @@ void ebbrt::IxgbeDriver::Init() {
   // TODO Enable Jumbo Packets
 
   // disable relaxed ordering
-  for (auto i = 0; i < 128; i++) {
+  /*for (auto i = 0; i < 128; i++) {
     WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));  // Txdesc_Wbro
 
     if (i < 64) {
@@ -1656,7 +2169,7 @@ void ebbrt::IxgbeDriver::Init() {
       WriteDcaRxctrl_2(
           i - 64, ~(0x1 << 13));  // Rx data Write Relax Order Enable, bit 13
     }
-  }
+    }*/
 
 #ifdef DCA_ENABLE
   // DCA_MODE = DCA 1.0
@@ -1666,10 +2179,11 @@ void ebbrt::IxgbeDriver::Init() {
 
 void ebbrt::IxgbeDriver::FinishSetup() {
   // No snoop disable from FreeBSD ??
-  WriteCtrlExt(0x1 << 16);  // NS_DIS
-  for (size_t i = 0; i < Cpu::Count(); i++) {
+  WriteCtrlExt(0x10000);
+  //WriteCtrlExt(0x1 << 16);  // NS_DIS
+  /*for (size_t i = 0; i < Cpu::Count(); i++) {
     WriteDcaRxctrlClear(i, ~(0x1 << 12));  // clear bit 12
-  }
+    }*/
   WriteEims(0xFFFF);
 }
 
@@ -1694,30 +2208,38 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   WriteRdlen_1(i, ixgmq[i]->rx_size_bytes_);
 
   // program srrctl register
-  WriteSrrctlZero(i);
+  WriteSrrctl_1(i, 0x2000403);
+  /*WriteSrrctlZero(i);
   WriteSrrctl_1(i, RXBUFSZ / 1024);  // bsizepacket
   WriteSrrctl_1(i, (128 / 64) << 8);  // bsizeheader
 
 // TODO headsplit adv
 #ifdef RSC_EN
   WriteSrrctl_1(i, 0x1 << 25);  // desctype adv
+#endif
 #else
   // legacy is default??
   WriteSrrctl_1(i, ~(0x7 << 25));  // desctype legacy
-#endif
+  #endif
 
-  WriteSrrctl_1(i, 0x1 << 28);  // Drop_En
+  WriteSrrctl_1(i, 0x1 << 28);  // Drop_En*/
 
 #ifdef RSC_EN
   // RSC set up
   WriteRscctl(i, 0x3 << 2);  // MAXDESC
   WriteRscctl(i, 0x1);  // RSCEN
-  WritePsrtypeZero(i);
-  WritePsrtype(i, 0x1 << 4);  // Split received TCP packets after TCP header.
 #endif
 
   // In NON-IOV, only psrtype[0] is used
-  WritePsrtype(0, 0x40001330);
+  if (i == 0) {
+    WritePsrtypeZero(0x1330);
+  }
+  //WritePsrtypeZero(i);
+  //WritePsrtype(i, 0x1 << 4);  // Split received TCP packets after TCP header.
+  
+  
+  //WritePsrtype(0, 0x40001330);
+  
   // Set head and tail pointers
   WriteRdt_1(i, 0x0);
   WriteRdh_1(i, 0x0);
@@ -1735,14 +2257,17 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
 
   // don't set up interrupts for tx since we have head writeback??
   auto qn = i / 2;  // put into correct IVAR
-
   if ((i % 2) == 0) {  // check if 2xN or 2xN + 1
-    WriteIvarAlloc0(qn, i);  // rx interrupt allocation corresponds to index i *
+    WriteIvarAlloc0(qn, i | 0x1 << 7);  // rx interrupt allocation corresponds to index i *
                              // 2 in MSI-X table
-    WriteIvarAllocval0(qn, 0x1 << 7);
+    //WriteIvarAllocval0(qn, 0x1 << 7);
+    WriteIvarAlloc0(qn, i << 8 | 0x1 << 15);
+    //WriteIvarAllocval0(qn, 0x1 << 15);
   } else {
-    WriteIvarAlloc2(qn, i << 16);
-    WriteIvarAllocval2(qn, 0x1 << 23);
+    WriteIvarAlloc2(qn, i << 16 | 0x1 << 23);
+    //WriteIvarAllocval2(qn, 0x1 << 23);
+    WriteIvarAlloc2(qn, i << 24 | 0x1 << 31);
+    //WriteIvarAllocval2(qn, 0x1 << 31);
   }
 
   // must be greater than rsc delay
@@ -1766,35 +2291,43 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
 
   // Enable RX
   // disable RX_DIS
-  WriteSecrxctrl_Rx_Dis(0x1 << 1);
+  //WriteSecrxctrl_Rx_Dis(0x1 << 1);
+  WriteSecrxctrl_Rx_Dis(0x3);
   // TODO Timeout
   while (ReadSecrxstat_Sr_Rdy() == 0)
     ;
   WriteRxctrl(0x1);
-  // enable RX_DIS
-  WriteSecrxctrl_Rx_Dis(0x0 << 1);
+  // enable RX_DIS, disable aes encryption offload, power savings
+  WriteSecrxctrl_Rx_Dis(0x1);
 
   // add buffer to each descriptor
-  for (size_t j = 0; j < NRXDESCS - 1; j++) {
+  for (size_t j = 0; j < NRXDESCS-1; j++) {
     auto rxphys =
         reinterpret_cast<uint64_t>((ixgmq[i]->circ_buffer_[j])->MutData());
     auto tail = ixgmq[i]->rx_tail_;
 
 // update buffer address for descriptor
-#ifdef RSC_EN
+/*#ifdef RSC_EN
     rdesc_adv_rf_t* tmp;
     tmp = reinterpret_cast<rdesc_adv_rf_t*>(&(ixgmq[i]->rx_ring_[tail]));
 
     tmp->packet_buffer = rxphys;
     // TODO only use this if enabling header splitting?
     tmp->header_buffer = 0;
-#else
+#else*/
     ixgmq[i]->rx_ring_[tail].buffer_address = rxphys;
-#endif
+//#endif
+    /*if(i == 0) {
+      ebbrt::kprintf("rx_ring_[tail=%u].buffer_address = 0x%X\n", tail, rxphys);
+      }*/
 
     ixgmq[i]->rx_tail_ = (tail + 1) % ixgmq[i]->rx_size_;
   }
 
+  auto rxphys =
+    reinterpret_cast<uint64_t>((ixgmq[i]->circ_buffer_[NRXDESCS-1])->MutData());
+  ixgmq[i]->rx_ring_[ixgmq[i]->rx_tail_].buffer_address = rxphys;
+  
   // bump tail pts via register rdt to enable descriptor fetching by setting to
   // length of ring minus one
   WriteRdt_1(i, ixgmq[i]->rx_tail_);
@@ -1810,6 +2343,9 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
 
   WriteDcaTxctrl(i, 0x1 << 5);  // DCA Enable
   WriteDcaTxctrl(i, myapic << 24);  // CPUID = apic id
+//#else
+//  ReadDcaTxctrl(i);
+//  ReadDcaRxctrl(i);
 #endif
 
   // program base address registers
@@ -1824,19 +2360,30 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   WriteTdwbah(i, (ixgmq[i]->txhwbaddr_ >> 32) & 0xFFFFFFFF);
 #endif
 
-  // enable transmit path
-  WriteDmatxctl_te(0x1);
+  // enable transmit path: This step should be executed oly for the first enabled transmit queue and does
+  // not need to be repeated for any following queues.
+  if(i == 0) {
+    WriteDmatxctl_te(0x1);
+  }
 
+  WriteTdh(i, 0x0);
+    
   // transmit queue enable
-  WriteTxdctl(i, 0x1 << 25);
-
+  //WriteTxdctl(i, 0x1 << 25);
+  //WriteTxdctl(i, 0x2010120);
+  WriteTxdctl(i, 0x2000000);
+  
   // poll until set, TODO: Timeout
-  while (ReadTxdctl_enable(i) == 0)
-    ;
+  while (ReadTxdctl_enable(i) == 0) {
+    ebbrt::clock::SleepMilli(1);
+  }
 
+  WriteTdt(i, 0x0);
+  ixgmq[i]->tx_tail_=0;
+  
   // TODO: set up dca txctrl FreeBSD?
   // clear TXdescWBROen
-  WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));
+  //WriteDcaTxctrlTxdescWbro(i, ~(0x1 << 11));
 }
 
 // after packet received, need to make sure device can reuse
@@ -1862,8 +2409,8 @@ void ebbrt::IxgbeDriverRep::ReclaimRx() {
 // may wait for RSC to be done
 uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr,
                                          uint64_t* rxflag, bool* process_rsc,
-                                         uint32_t* rnt) {
-#ifdef RSC_EN
+                                         uint32_t* rnt, uint32_t* rxhead) {
+//#ifdef RSC_EN
   rdesc_adv_wb_t* tmp;
   tmp = reinterpret_cast<rdesc_adv_wb_t*>(&(ixgmq_.rx_ring_[ixgmq_.rx_head_]));
 
@@ -1874,8 +2421,13 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr,
 
   auto rsccnt = tmp->rsccnt;
 
+  // makes sure all reads are finished before
+  asm volatile("lfence":::"memory");
+
+  //ebbrt::kprintf("rx_head=%u rsccnt=%u len=%d dd=%u eop=%u nextp=%u\n", *rxhead, rsccnt, tmp->pkt_len, tmp->dd, tmp->eop, tmp->next_descriptor_ptr);
+  
   // not RSC, handled normally
-  if (rsccnt == 0 && tmp->eop) {
+  if (rsccnt == 0 && tmp->eop && tmp->dd) {
     *len = tmp->pkt_len;
 
     /* set rx flags */
@@ -1895,9 +2447,14 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr,
       }
     }
 
+    *rxhead = ixgmq_.rx_head_;
+    //ebbrt::kprintf("\t rx_head=%u rsccnt=%u len=%d dd=%u eop=%u nextp=%u\n", *rxhead, rsccnt, tmp->pkt_len, tmp->dd, tmp->eop, tmp->next_descriptor_ptr);
+    
+    //ebbrt::kprintf("\t rx_head=%d rsccnt=%d len=%d rss_type=0x%X rss_hash=0x%X\n", *rxhead, rsccnt, tmp->pkt_len, tmp->rss_type, tmp->rss_hash);
+      
     // reset descriptor
-    ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0] = 0;
-    ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[1] = 0;
+    //ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[0] = 0;
+    //ixgmq_.rx_ring_[ixgmq_.rx_head_].raw[1] = 0;
 
     // bump head ptr
     ixgmq_.rx_head_ = (ixgmq_.rx_head_ + 1) % ixgmq_.rx_size_;
@@ -1945,7 +2502,7 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr,
     ixgmq_.rsc_used = true;
     ixgmq_.rsc_chain_.clear();
     ixgmq_.rsc_chain_.emplace_back(
-        std::make_pair(ixgmq_.rx_head_, static_cast<uint32_t>(tmp->pkt_len)));
+      std::make_pair(ixgmq_.rx_head_, static_cast<uint32_t>(tmp->pkt_len)));
     // bump head ptr
     ixgmq_.rx_head_ = (ixgmq_.rx_head_ + 1) % ixgmq_.rx_size_;
 
@@ -1999,7 +2556,7 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr,
     ebbrt::kabort("%s Not sure what state\n", __FUNCTION__);
   }
 
-#else
+/*#else
   // no RSC so just get one packet at a time
   rdesc_legacy_t tmp;
   tmp = ixgmq_.rx_ring_[ixgmq_.rx_head_];
@@ -2007,7 +2564,7 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr,
   if (tmp.dd && tmp.eop) {
     *len = tmp.length;
 
-    /* set rx flags */
+   // set rx flags
     // TCP/UDP checksum
     if (tmp.l4cs) {
       *rxflag |= RXFLAG_L4CS;
@@ -2035,7 +2592,7 @@ uint32_t ebbrt::IxgbeDriverRep::GetRxBuf(uint32_t* len, uint64_t* bAddr,
 #endif
     return 0;
   }
-#endif
+  #endif*/
 
   return 1;
 }
@@ -2047,6 +2604,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   bool process_rsc;
   uint32_t count;
   uint32_t rnt;
+  uint32_t rxhead;
   process_rsc = false;
 #ifdef STATS_EN
   ixgmq_.stat_num_itr ++;
@@ -2057,14 +2615,14 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   uint32_t mcore = static_cast<uint32_t>(Cpu::GetMine());
 
   // get address of buffer with data
-  while (GetRxBuf(&len, &bAddr, &rxflag, &process_rsc, &rnt) == 0) {
+  while (GetRxBuf(&len, &bAddr, &rxflag, &process_rsc, &rnt, &rxhead) == 0) {
     // hit last rsc context, start to process all buffers
     if (process_rsc) {
       process_rsc = false;
       count++;
 
       auto n = ixgmq_.rsc_chain_[0].first;
-      auto rsclen = 0;
+      uint32_t rsclen = 0;
 
       // TODO hack - need to set actual length of data else there'll be 0's
       // attached
@@ -2087,11 +2645,59 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
 
       ReclaimRx();
 
-      ebbrt::kprintf("\t ReceivePoll() RSC on core: %d len=%d\n", mcore, static_cast<int>(rsclen));
-      
+      /*if (len > 60) {
+	ebbrt::kprintf("\t RSC on core: %d len=%u\n", mcore, rsclen);
+	}*/
       root_.itf_.Receive(std::move(b), rxflag);
     } else {
-      // done with buffer addr above, now to reuse it
+      //count ++;
+
+      //ebbrt::kprintf("Core: %d ReceivePoll() len=%d rxhead=%d\n", mcore, len, rxhead);
+      
+      ixgmq_.circ_buffer_[rxhead]->SetLength(len);
+      auto b = std::move(ixgmq_.circ_buffer_[rxhead]);
+
+      // bump tail ptr
+      ixgmq_.rx_tail_ = (ixgmq_.rx_tail_ + 1) % ixgmq_.rx_size_;
+      
+      /*if (len > 60) {
+	ebbrt::kprintf("Core: %d ReceivePoll() len=%d rxhead=%d START\n", mcore, len, rxhead);
+	auto p1 = reinterpret_cast<uint8_t*>(b->MutData());
+	int i=0;
+	ebbrt::kprintf("%02X%02X%02X%02X%02X%02X%02X%02X\n", p1[i], p1[i+1], p1[i+2], p1[i+3], p1[i+4], p1[i+5], p1[i+6], p1[i+7]);
+	ebbrt::kprintf("Core: %d ReceivePoll() len=%d rxhead=%d END\n", mcore, len, rxhead);
+	for (int i = 0; i < (int)len; i+=8) {
+	  if (i+8 < (int)len) {
+	  ebbrt::kprintf("%02X%02X%02X%02X%02X%02X%02X%02X\n", p1[i], p1[i+1], p1[i+2], p1[i+3], p1[i+4], p1[i+5], p1[i+6], p1[i+7]);
+	  } else {
+	    for(int j = i; j < (int)len; j++) {
+	      ebbrt::kprintf("%02X\n", p1[j]);
+	    }
+	  }
+	}
+	}*/
+      /*if (len > 60) {
+	ebbrt::kprintf("\t ReceivePoll on core: %d len=%u\n", mcore, len);
+	}*/
+      root_.itf_.Receive(std::move(b), rxflag);
+
+      // reset buffer
+      ixgmq_.rx_ring_[rxhead].raw[0] = 0;
+      ixgmq_.rx_ring_[rxhead].raw[1] = 0;
+      // allocate new rx buffer
+      ixgmq_.circ_buffer_[rxhead] = std::move(MakeUniqueIOBuf(IxgbeDriver::RXBUFSZ));
+      auto rxphys =
+        reinterpret_cast<uint64_t>((ixgmq_.circ_buffer_[rxhead])->MutData());
+      // update buffer with new adder
+      ixgmq_.rx_ring_[rxhead].buffer_address = rxphys;
+
+      // TODO: Update tail register here or above?
+      //if (count > 0) {
+	// update reg
+      WriteRdt_1(mcore, ixgmq_.rx_tail_);
+	//}
+  
+      /*// done with buffer addr above, now to reuse it
       auto tail = ixgmq_.rx_tail_;
 
       // bump tail ptr
@@ -2117,25 +2723,23 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
         ixgmq_.rx_ring_[tail].buffer_address = rxphys;
 
 	// dump eth packet info
+	//if(len > 1500 && len < 1600) {
 	ebbrt::kprintf("\t ReceivePoll() on core: %d len=%d\n", mcore, len);
-	auto p1 = reinterpret_cast<uint8_t*>(b->MutData());
-	for (int i = 0; i < (int)len; i+=8) {
-	  if (i+8 < (int)len) {
-	    ebbrt::kprintf("%02X%02X%02X%02X%02X%02X%02X%02X\n", p1[i], p1[i+1], p1[i+2], p1[i+3], p1[i+4], p1[i+5], p1[i+6], p1[i+7]);
-	  }
-	  else{
-	    ebbrt::kprintf("%02X\n", p1[i]);
-	  }
-	}
+	
+	  auto p1 = reinterpret_cast<uint8_t*>(b->MutData());
+	  for (int i = 0; i < (int)len; i+=8) {
+	    if (i+8 < (int)len) {
+	      ebbrt::kprintf("%02X%02X%02X%02X%02X%02X%02X%02X\n", p1[i], p1[i+1], p1[i+2], p1[i+3], p1[i+4], p1[i+5], p1[i+6], p1[i+7]);
+	    }
+	    else{
+	      ebbrt::kprintf("%02X\n", p1[i]);
+	    }
+	    }
+	  //}
+	
 	root_.itf_.Receive(std::move(b), rxflag);
-      }
-    } 
-  }
-  
-  // TODO: Update tail register here or above?
-  if (count > 0) {
-    // update reg
-    WriteRdt_1(mcore, ixgmq_.rx_tail_);
+      }*/
+    }
   }
 }
 
@@ -2143,7 +2747,7 @@ ebbrt::IxgbeDriverRep::IxgbeDriverRep(const IxgbeDriver& root)
     : root_(root), ixgq_(root_.GetQueue()),
       ixgmq_(root.GetMultiQueue(Cpu::GetMine())),
       receive_callback_([this]() { ReceivePoll(); }) {
-  this->ReceivePoll();
+  //this->ReceivePoll();
 }
 
 uint16_t ebbrt::IxgbeDriverRep::ReadRdh_1(uint32_t n) {
@@ -2180,3 +2784,11 @@ void ebbrt::IxgbeDriverRep::WriteEimc(uint32_t m) { root_.bar0_.Write32(0x00888,
 
 // 8.2.3.5.3 Extended Interrupt Mask Set/Read Register- EIMS (0x00880; RWS)
 void ebbrt::IxgbeDriverRep::WriteEims(uint32_t m) { root_.bar0_.Write32(0x00880, m); }
+
+uint32_t ebbrt::IxgbeDriverRep::ReadTdh_1(uint32_t n) {
+  auto reg = root_.bar0_.Read32(0x06010 + 0x40 * n);
+  return reg & 0xFFFF;
+}
+uint32_t ebbrt::IxgbeDriverRep::ReadTdt_1(uint32_t n) {
+  return root_.bar0_.Read32(0x06018 + 0x40 * n) & 0xFFFF;
+}

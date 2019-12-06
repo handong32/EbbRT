@@ -950,7 +950,7 @@ void ebbrt::NetworkManager::TcpEntry::EnqueueSegment(
   th.SetHdrLenFlags(sizeof(TcpHeader) + optlen, flags);
   // ackno, wnd, and checksum are set in Output()
   th.urgp = 0;
-
+  
   pending_segments.emplace_back(std::move(buf), th, tcp_len);
 
   snd_nxt += tcp_len;
@@ -1017,13 +1017,61 @@ void ebbrt::NetworkManager::TcpEntry::SendEmptyAck() {
   rcv_last_acked = rcv_nxt;
   th.ackno = htonl(rcv_nxt);
   th.wnd = htons(TcpWindow16(rcv_wnd));
-  th.checksum = OffloadPseudoCsum(*buf, kIpProtoTCP, address, std::get<0>(key));
+  th.checksum = 0; //OffloadPseudoCsum(*buf, kIpProtoTCP, address, std::get<0>(key));
+  
+  //auto local_ip = htonl(address.toU32());
+  //auto remote_ip = htonl((std::get<0>(key)).toU32());
 
+  //ebbrt::kprintf("SendEmptyAck() src_ip=0x%llX dst_ip=0x%llX kIpProtoTCP=0x%X buf_len=0x%X src_port=0x%X dst_port=0x%X seq_num=0x%X ack_num=0x%X\n", local_ip, remote_ip, kIpProtoTCP, 0, th.src_port, th.dst_port, th.seqno, th.ackno);
+  //ebbrt::kprintf("\t flags=0x%X windows=0x%X urgent_pointer=0x%X tcp_header.checksum=0x%X \n", th.hdrlen_flags, th.wnd, th.urgp, th.checksum);
+
+  /*auto pl = buf->ComputeChainDataLength();
+  //ebbrt::kprintf("\t packet_len=%u\n", pl);
+  uint8_t* p1 = reinterpret_cast<uint8_t*>(buf->MutData());
+  int i;
+    uint32_t sum = 0;
+  uint16_t word16;
+  for (i = 0; i < (int)pl; i+=2) {
+    word16 = ((p1[i]<<8)&0xFF00) + (p1[i+1]&0xFF);
+    sum = sum + (uint32_t)word16;
+  }
+  // pseudo header start
+  //add src addr
+  word16 = (local_ip & 0xFFFF);
+  sum = sum + (uint32_t)word16;
+  word16 = ((local_ip >> 16) & 0xFFFF);
+  sum = sum + (uint32_t)word16;
+
+  //add dst addr
+  word16 = (remote_ip & 0xFFFF);
+  sum = sum + (uint32_t)word16;
+  word16 = ((remote_ip >> 16) & 0xFFFF);
+  sum = sum + (uint32_t)word16;
+
+  //add protocol number and length of tcpp packet
+  sum = sum + kIpProtoTCP + pl;
+  // pseudo header end
+
+  while(sum >> 16) {
+    sum = (sum & 0xFFFF) + (sum >> 16);
+  }
+  sum = (~sum) & 0xFFFF;
+  th.checksum = htons((uint16_t) sum);
+  //ebbrt::kprintf("\t new checksum=0x%X\n\n", th.checksum);
+  */
+  
   PacketInfo pinfo;
   pinfo.flags |= PacketInfo::kNeedsCsum;
   pinfo.csum_start = 0;
   pinfo.csum_offset = 16;  // checksum is 16 bytes into the TCP header
-
+  
+  th.checksum =
+    OffloadPseudoCsum(*buf, kIpProtoTCP, address, std::get<0>(key));
+    //OffloadPseudoCsumTso(kIpProtoTCP, address, std::get<0>(key));
+  pinfo.tcp_len = 0;
+  pinfo.tcp_hdr_len = th.HdrLen();
+  //ebbrt::kprintf("SendEmptyAck() checksum=0x%X\n\n", th.checksum);
+  
   network_manager->SendIp(std::move(buf), address, std::get<0>(key),
                           kIpProtoTCP, pinfo);
 }
@@ -1076,30 +1124,120 @@ void ebbrt::NetworkManager::TcpEntry::SendFin() {
 
 // Actually send a segment via IP
 void ebbrt::NetworkManager::TcpEntry::SendSegment(TcpSegment& segment) {
+  uint32_t len = segment.buf->ComputeChainDataLength();
+  uint32_t totallen = len + sizeof(Ipv4Header) + sizeof(EthernetHeader);
   rcv_last_acked = rcv_nxt;
   segment.th.ackno = htonl(rcv_nxt);
   segment.th.wnd = htons(TcpWindow16(rcv_wnd));
   segment.th.checksum = 0;
-  // XXX: check if checksum offloading is supported
-  segment.th.checksum =
+
+  // 82599 has a different checksum method when greater than a single MTU, the paylen field is set to 0
+  if(totallen > 1490) {
+    segment.th.checksum =
+      OffloadPseudoCsumTso(kIpProtoTCP, address, std::get<0>(key));
+  } else {
+    // XXX: check if checksum offloading is supported
+    segment.th.checksum =
       OffloadPseudoCsum(*(segment.buf), kIpProtoTCP, address, std::get<0>(key));
+  }
   PacketInfo pinfo;
   pinfo.flags |= PacketInfo::kNeedsCsum;
   pinfo.csum_start = 0;
   pinfo.csum_offset = 16;  // checksum is 16 bytes into the TCP header
 
+  //auto local_ip = htonl(address.toU32());
+  //auto remote_ip = htonl((std::get<0>(key)).toU32());
+  
+  //ebbrt::kprintf("SendSegment() src_ip=0x%llX dst_ip=0x%llX kIpProtoTCP=0x%X buf_len=0x%X src_port=0x%X dst_port=0x%X seq_num=0x%X ack_num=0x%X htonl(ack_num)=0x%X\n", local_ip, remote_ip, kIpProtoTCP, segment.buf->ComputeChainDataLength(), segment.th.src_port, segment.th.dst_port, segment.th.seqno, segment.th.ackno, htonl(segment.th.ackno));
+  //ebbrt::kprintf("\t flags=0x%X windows=0x%X urgent_pointer=0x%X sizeof(TcpHeader)=%d tcp_header.checksum=0x%X\n", segment.th.hdrlen_flags, segment.th.wnd, 0, sizeof(TcpHeader), segment.th.checksum);
+
+  /*uint32_t i, tmp, count, sum, len;
+  uint16_t word16;
+
+  tmp = count = sum = len = 0x0;
+  
+  if(segment.buf->IsChained()) {
+    for (auto& buf_it : *(segment.buf)) {
+      auto p1 = reinterpret_cast<const uint8_t*>(buf_it.Data());
+      len += buf_it.Length();
+      //if(b == 0 && p1[0] == 0x81 && p1[1] == 0x0) {
+//	b = 1;
+//	pinfo.flags |= PacketInfo::kNeedsCsum;
+//	}
+      for (i = 0; i < buf_it.Length(); i++) {
+	if (count < 2) {
+	  tmp = tmp | (p1[i] << ((1-count) * 8));
+	  count ++;
+	  
+	  if(count == 2) {
+	    sum += tmp;
+	    tmp = count = 0x0;
+	  }
+	}
+      }
+    }
+  } else {
+    uint8_t* p1 = reinterpret_cast<uint8_t*>(segment.buf->MutData());
+    len = segment.buf->ComputeChainDataLength();
+    for (i = 0; i < len; i++) {
+      if (count < 2) {
+	tmp = tmp | (p1[i] << ((1-count) * 8));
+	count ++;
+	
+	if(count == 2) {
+	  sum += tmp;
+	  tmp = count = 0x0;
+	}
+      }
+    }
+  }
+  
+  sum += tmp;
+
+  // pseudo header start
+  //add src addr
+  word16 = (local_ip & 0xFFFF);
+  sum = sum + (uint32_t)word16;
+  word16 = ((local_ip >> 16) & 0xFFFF);
+  sum = sum + (uint32_t)word16;
+
+  //add dst addr
+  word16 = (remote_ip & 0xFFFF);
+  sum = sum + (uint32_t)word16;
+  word16 = ((remote_ip >> 16) & 0xFFFF);
+  sum = sum + (uint32_t)word16;
+
+  //add protocol number
+  sum = sum + kIpProtoTCP + len;
+  
+  while(sum >> 16) {
+    sum = (sum & 0xFFFF) + (sum >> 16);
+  }
+  sum = (~sum) & 0xFFFF;
+  segment.th.checksum = htons((uint16_t) sum);
+  // pseudo header end
+  */
+    //OffloadPseudoCsumTso(kIpProtoTCP, address, std::get<0>(key));
+
+  pinfo.tcp_hdr_len = segment.th.HdrLen();
+  pinfo.tcp_len = len - pinfo.tcp_hdr_len;
+  
+  //ebbrt::kprintf("\nSendSegment() total_len=%u len=%u tcp_hdr_len=%u tcp_len=%u checksum=0x%X\n", totallen, len, pinfo.tcp_hdr_len, pinfo.tcp_len, segment.th.checksum);
+  /*if(b) {
+    ebbrt::kprintf("len=%u checksum=0x%X\n\n", len, segment.th.checksum);
+    }*/
+  
   // XXX: Actually store the MSS instead of making this assumption
   size_t mss = 1460;
   if (segment.tcp_len > mss) {
     pinfo.gso_type = PacketInfo::kGsoTcpv4;
     pinfo.hdr_len = segment.th.HdrLen();
     pinfo.gso_size = mss;
-#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
-    segment.th.checksum =
-      OffloadPseudoCsumTso(kIpProtoTCP, address, std::get<0>(key));
-#endif
+//#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
+    
+//#endif
   }
-
+  
   network_manager->SendIp(CreateRefChain(*(segment.buf)), address,
                           std::get<0>(key), kIpProtoTCP, std::move(pinfo));
 }
@@ -1110,6 +1248,8 @@ void ebbrt::NetworkManager::TcpReset(bool ack, uint32_t seqno, uint32_t ackno,
                                      const Ipv4Address& remote_ip,
                                      uint16_t local_port,
                                      uint16_t remote_port) {
+
+  ebbrt::kabort("ebbrt::NetworkManager::TcpReset() - Aborting haven't added checksum offloading\n");
   auto buf = MakeUniqueIOBuf(sizeof(TcpHeader) + sizeof(Ipv4Header) +
                              sizeof(EthernetHeader));
 
@@ -1125,9 +1265,12 @@ void ebbrt::NetworkManager::TcpReset(bool ack, uint32_t seqno, uint32_t ackno,
   tcp_header.SetHdrLenFlags(sizeof(TcpHeader), kTcpRst | (ack ? kTcpAck : 0));
   tcp_header.wnd = htons(TcpWindow16(kTcpWnd));
   tcp_header.urgp = 0;
-  tcp_header.checksum =
-      OffloadPseudoCsum(*buf, kIpProtoTCP, local_ip, remote_ip);
+  tcp_header.checksum = 0;
+    //OffloadPseudoCsum(*buf, kIpProtoTCP, local_ip, remote_ip);
 
+  //ebbrt::kprintf("TcpReset() src_ip=0x%llX dst_ip=0x%llX kIpProtoTCP=0x%X buf_len=0x%X src_port=0x%X dst_port=0x%X seq_num=0x%X ack_num=0x%X\n", local_ip.toU32(), remote_ip.toU32(), kIpProtoTCP, 0, tcp_header.src_port, tcp_header.dst_port, tcp_header.seqno, tcp_header.ackno);
+  //ebbrt::kprintf("\t flags=0x%X windows=0x%X urgent_pointer=0x%X tcp_header.checksum=0x%X \n\n", tcp_header.hdrlen_flags, tcp_header.wnd, tcp_header.urgp, tcp_header.checksum);
+  
   PacketInfo pinfo;
   pinfo.flags |= PacketInfo::kNeedsCsum;
   pinfo.csum_start = 0;  // 14 byte eth header + 20 byte ip header

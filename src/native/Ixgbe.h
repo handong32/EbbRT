@@ -36,6 +36,10 @@
 
 #define IXGBE_EITR_CNT_WDIS     0x80000000
 
+// max transmit sizes
+#define IXGBE_MAX_TXD_PWR	14
+#define IXGBE_MAX_DATA_PER_TXD	(1u << IXGBE_MAX_TXD_PWR)
+
 enum l4_type { l4_type_udp = 0, l4_type_tcp, l4_type_sctp, l4_type_rsv };
 
 #define ETHHDR_LEN 14
@@ -277,7 +281,7 @@ typedef union {
         uint64_t fcoe : 1;
         uint64_t rsvd_2 : 4;
 
-        uint64_t dytp : 4;
+        uint64_t dtyp : 4;
         uint64_t rsvd_3 : 5;
         uint64_t dext : 1;
 

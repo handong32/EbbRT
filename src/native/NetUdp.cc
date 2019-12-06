@@ -132,6 +132,10 @@ void ebbrt::NetworkManager::Interface::SendUdp(UdpPcb& pcb, Ipv4Address addr,
     src_addr = itf_addr->address;
   }
 
+  if(data_size % 2 > 0) {
+    throw std::runtime_error("SendUdp: data buffer size must be multiple of 2");
+  }
+  
   // Get source port
   auto src_port = pcb.entry_->port;
   if (!src_port)
@@ -148,12 +152,58 @@ void ebbrt::NetworkManager::Interface::SendUdp(UdpPcb& pcb, Ipv4Address addr,
   udp_header.length = htons(data_size + sizeof(UdpHeader));
   udp_header.checksum = 0;
 
+  //uint64_t buff_addr = reinterpret_cast<uint64_t>(buf->Data());
+  
   // Append data
   header_buf->AppendChain(std::move(buf));
 
   udp_header.checksum =
-      OffloadPseudoCsum(*header_buf, kIpProtoUDP, src_addr, addr);
+    OffloadPseudoCsum(*header_buf, kIpProtoUDP, src_addr, addr);
+    //OffloadPseudoCsumTso(kIpProtoUDP, src_addr, addr);
+  //  OffloadPseudoCsum(*header_buf, kIpProtoUDP, src_addr, addr);
+  
+  //ebbrt::kprintf("udp_header.checksum=0x%X udp_header.length=%d src_port=%d dst_port=%d kIpProtoUDP=0x%X src_addr=0x%llX dst_addr=0x%llX buf_len=%d\n", udp_header.checksum, data_size + sizeof(UdpHeader), src_port, port, kIpProtoUDP, src_addr.toU32(), addr.toU32(), data_size);
+  /*uint8_t* p1 = reinterpret_cast<uint8_t*>(buff_addr);
+  int i;
+  uint32_t sum = 0;
+  uint16_t word16;
+  for (i = 0; i < (int)data_size; i+=2) {
+    word16 = ((p1[i]<<8)&0xFF00) + (p1[i+1]&0xFF);
+    sum = sum + (uint32_t)word16;
+  }
 
+  // pseudo header start
+  //add src addr
+  word16 = (src_addr.toU32() & 0xFFFF);
+  sum = sum + (uint32_t)word16;
+  word16 = ((src_addr.toU32() >> 16) & 0xFFFF);
+  sum = sum + (uint32_t)word16;
+
+  //add dst addr
+  word16 = (addr.toU32() & 0xFFFF);
+  sum = sum + (uint32_t)word16;
+  word16 = ((addr.toU32() >> 16) & 0xFFFF);
+  sum = sum + (uint32_t)word16;
+  //sum = sum + (uint32_t)(addr.toU32());
+
+  //add protocol number and length of udp packet
+  sum = sum + kIpProtoUDP + (data_size + sizeof(UdpHeader));
+  // pseudo header end
+
+  // udp header start
+  // port
+  sum = sum + (uint32_t) src_port;
+  sum = sum + (uint32_t) port;
+  sum = sum + (uint32_t) (data_size + sizeof(UdpHeader));
+  // udp header end
+
+  while(sum >> 16) {
+    sum = (sum & 0xFFFF) + (sum >> 16);
+  }
+  sum = (~sum) & 0xFFFF;
+  udp_header.checksum = htons((uint16_t) sum);
+  //ebbrt::kprintf("real checksum? 0x%X\n", udp_header.checksum);
+  */
   // XXX: check if checksum offloading is supported
   PacketInfo pinfo;
   pinfo.flags |= PacketInfo::kNeedsCsum;

@@ -101,8 +101,10 @@ class IxgbeDriver : public EthernetDevice {
   static const constexpr uint32_t NTXDESCS = 8192;
   static const constexpr uint32_t NRXDESCS = 8192;
 #else
-  static const constexpr uint32_t NTXDESCS = 512;
-  static const constexpr uint32_t NRXDESCS = 512;  
+  //static const constexpr uint32_t NTXDESCS = 512;
+  //static const constexpr uint32_t NRXDESCS = 512;
+  static const constexpr uint32_t NTXDESCS = 128;
+  static const constexpr uint32_t NRXDESCS = 128;  
 #endif
 
   // Linux Defaults
@@ -128,8 +130,8 @@ class IxgbeDriver : public EthernetDevice {
           tx_last_tail_(0), tx_size_(NTXDESCS), idx_(idx), rxflag_(0),
           rsc_used(false), hanc{0} {
 
-      circ_buffer_.reserve(NRXDESCS);
-      for (uint32_t k = 0; k < NRXDESCS; k++) {
+      circ_buffer_.reserve(NRXDESCS+1);
+      for (uint32_t k = 0; k < NRXDESCS+1; k++) {
         circ_buffer_.emplace_back(MakeUniqueIOBuf(RXBUFSZ, true));
       }
 
@@ -138,7 +140,7 @@ class IxgbeDriver : public EthernetDevice {
       // packet data else code will read redundant
       // zeros if packet len does not use full buffer
       // TODO: should be optimized
-      rsc_chain_.reserve(NRXDESCS);
+      rsc_chain_.reserve(NRXDESCS+1);
 
       // RX ring buffer allocation
       auto sz = align::Up(sizeof(rdesc_legacy_t) * NRXDESCS, 4096);
@@ -297,6 +299,7 @@ class IxgbeDriver : public EthernetDevice {
 
   void WriteEicr(uint32_t m);
   void WriteGpie(uint32_t m);
+  void WriteEiam(uint32_t n, uint32_t m);
 
   void WriteEims(uint32_t m);
 
@@ -330,7 +333,9 @@ class IxgbeDriver : public EthernetDevice {
   void WriteDcaRxctrl_1(uint32_t n, uint32_t m);
   void WriteDcaRxctrl_2(uint32_t n, uint32_t m);
   void WriteDcaCtrl(uint32_t m);
-
+  void ReadDcaTxctrl(uint32_t n);
+  void ReadDcaRxctrl(uint32_t n);
+  
   void WriteRdbal_1(uint32_t n, uint32_t m);
   void WriteRdbal_2(uint32_t n, uint32_t m);
 
@@ -366,6 +371,7 @@ class IxgbeDriver : public EthernetDevice {
 
   void WriteTdh(uint32_t n, uint32_t m);
   void WriteTdt(uint32_t n, uint32_t m);
+  uint32_t ReadTdt(uint32_t n);
 
   void WriteTdwbal(uint32_t n, uint32_t m);
   void WriteTdwbah(uint32_t n, uint32_t m);
@@ -499,8 +505,10 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
   void WriteEimcn(uint32_t n, uint32_t m);
   void WriteEimc(uint32_t m);
   void WriteEims(uint32_t m);
+  uint32_t ReadTdh_1(uint32_t n);
+  uint32_t ReadTdt_1(uint32_t n);
   uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_t* rxflag,
-                    bool* process_rsc, uint32_t* rnt);
+                    bool* process_rsc, uint32_t* rnt, uint32_t* rxhead);
 
   const IxgbeDriver& root_;
   e10k_queue_t& ixgq_;

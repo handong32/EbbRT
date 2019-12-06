@@ -46,6 +46,8 @@ struct PacketInfo {
   uint16_t gso_size{0};
   uint16_t csum_start{0};
   uint16_t csum_offset{0};
+  uint32_t tcp_len{0};
+  uint32_t tcp_hdr_len{0};
   bool get_stats{false};
 };
 
