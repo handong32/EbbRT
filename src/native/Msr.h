@@ -29,7 +29,7 @@ inline uint64_t Read(uint32_t index) {
 
 inline void Write(uint32_t index, uint64_t data) {
   uint32_t low = data;
-  uint32_t high = data >> 32;
+  uint32_t high = (data >> 32) & 0xFFFFFFFF;
 
 #ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
   // TODO - correct fix is here?

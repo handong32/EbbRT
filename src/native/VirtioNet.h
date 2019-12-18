@@ -24,6 +24,7 @@ class VirtioNetDriver : public VirtioDriver<VirtioNetDriver>,
   static void Create(pci::Device& dev);
   static uint32_t GetDriverFeatures();
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) override;
+  void Config(std::string s, uint32_t v) override;
   const EthernetAddress& GetMacAddress() override;
 
  private:

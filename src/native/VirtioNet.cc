@@ -164,6 +164,8 @@ ebbrt::VirtioNetRep::VirtioNetRep(const VirtioNetDriver& root)
       receive_callback_([this]() { ReceivePoll(); }), circ_buffer_head_(0),
       circ_buffer_tail_(0) {}
 
+void ebbrt::VirtioNetDriver::Config(std::string s, uint32_t v) {}
+
 void ebbrt::VirtioNetDriver::Send(std::unique_ptr<IOBuf> buf,
                                   PacketInfo pinfo) {
   ebb_->Send(std::move(buf), std::move(pinfo));

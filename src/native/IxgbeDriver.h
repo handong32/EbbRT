@@ -19,6 +19,7 @@
 #include "Pfn.h"
 #include "SlabAllocator.h"
 #include "Perf.h"
+#include "Rapl.h"
 
 // Receive Side Scaling (RSC) enabled
 //#define RSC_EN
@@ -28,11 +29,12 @@
 //#define TX_HEAD_WB
 
 // Collect Statistics Flag
-//#define STATS_EN
+#define STATS_EN
 //#define MAX_DESC
 
-namespace ebbrt {
 
+namespace ebbrt {
+  
 // Per-core receive and transmit queue
 typedef struct {
   rdesc_legacy_t* rx_ring;
@@ -67,7 +69,7 @@ class IxgbeDriver : public EthernetDevice {
     // each core gets a queue struct
     ixgmq.resize(Cpu::Count());
   }
-
+  
   static void Create(pci::Device& dev);
   static bool Probe(pci::Device& dev) {
     if (dev.GetVendorId() == kIxgbeVendorId &&
@@ -77,12 +79,14 @@ class IxgbeDriver : public EthernetDevice {
     }
     return false;
   }
-
-  void Run();
+  
+  //void Run();
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) override;
+  void Config(std::string s, uint32_t v) override;
   const EthernetAddress& GetMacAddress() override;
 
  protected:
+  
   static const constexpr uint16_t kIxgbeVendorId = 0x8086;
   static const constexpr uint16_t kIxgbeDeviceId = 0x10FB;
 
@@ -101,10 +105,8 @@ class IxgbeDriver : public EthernetDevice {
   static const constexpr uint32_t NTXDESCS = 8192;
   static const constexpr uint32_t NRXDESCS = 8192;
 #else
-  //static const constexpr uint32_t NTXDESCS = 512;
-  //static const constexpr uint32_t NRXDESCS = 512;
-  static const constexpr uint32_t NTXDESCS = 128;
-  static const constexpr uint32_t NRXDESCS = 128;  
+  static const constexpr uint32_t NTXDESCS = 64;
+  static const constexpr uint32_t NRXDESCS = 64;
 #endif
 
   // Linux Defaults
@@ -114,7 +116,7 @@ class IxgbeDriver : public EthernetDevice {
   //static const constexpr uint32_t RXBUFSZ = 4096;
   //static const constexpr uint32_t RXBUFSZ = 16384;
 
-  static const constexpr uint8_t ITR_INTERVAL = 6;
+  static const constexpr uint8_t ITR_INTERVAL = 200;
   // 3 bits only (0 - 7) in (RSC_DELAY + 1) * 4 us
   static const constexpr uint8_t RSC_DELAY = 1;
   
@@ -141,6 +143,11 @@ class IxgbeDriver : public EthernetDevice {
       // zeros if packet len does not use full buffer
       // TODO: should be optimized
       rsc_chain_.reserve(NRXDESCS+1);
+
+      // keeps a log of descriptors where eop == 1
+      // used to coalesce reclaiming of tx descriptors
+      // once the threshold of some limit is hit
+      send_to_watch.reserve(NRXDESCS);
 
       // RX ring buffer allocation
       auto sz = align::Up(sizeof(rdesc_legacy_t) * NRXDESCS, 4096);
@@ -198,7 +205,7 @@ class IxgbeDriver : public EthernetDevice {
       ebbrt::kbugon((tx_size_bytes_ & 0x7F) != 0,
                     "tx_size_bytes_ not 128 byte aligned\n");
     }
-
+    
     size_t rx_head_;
     size_t rx_tail_;
     size_t rx_size_;
@@ -215,7 +222,8 @@ class IxgbeDriver : public EthernetDevice {
 
     std::vector<std::unique_ptr<MutIOBuf>> circ_buffer_;
     std::vector<std::pair<uint32_t, uint32_t>> rsc_chain_;
-
+    std::vector<uint32_t> send_to_watch;
+      
     rdesc_legacy_t* rx_ring_;
     tdesc_legacy_t* tx_ring_;
     bool* tx_isctx_;
@@ -228,18 +236,28 @@ class IxgbeDriver : public EthernetDevice {
 #endif
 
     // stats
-    uint64_t stat_num_itr{0};
+    uint64_t stat_num_recv{0};
     uint64_t stat_num_send{0};
-    uint64_t stat_num_rx{0};
-    uint64_t stat_num_tx{0};
-
-    bool stat_perf{false};
+    uint64_t stat_num_rx_bytes{0};
+    uint64_t stat_num_tx_bytes{0};
+    uint64_t time_us{0};
+    uint64_t ttotalt{0};
+    uint64_t totalCycles{0};
+    uint64_t totalIns{0};
+    uint64_t totalLLCmisses{0};
+    double totalNrg{0.0};
+    double totalTime{0.0};
+    
+    bool stat_start{false};
+    bool stat_init{false};
     ebbrt::perf::PerfCounter perfCycles;
     ebbrt::perf::PerfCounter perfInst;
     ebbrt::perf::PerfCounter perfLLC_ref;
     ebbrt::perf::PerfCounter perfLLC_miss;
     ebbrt::perf::PerfCounter perfTLB_store_miss;
     ebbrt::perf::PerfCounter perfTLB_load_miss;
+    ebbrt::rapl::RaplCounter powerMeter;
+    
   };
 
  private:
@@ -483,7 +501,7 @@ class IxgbeDriver : public EthernetDevice {
   friend class IxgbeDriverRep;
 };  // class IxgbeDriver
 
-class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
+class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver>, Timer::Hook {
  public:
   explicit IxgbeDriverRep(const IxgbeDriver& root);
   void Run();
@@ -495,7 +513,9 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
                   enum l4_type l4type);
   void AddTx(uint64_t pa, uint64_t len, uint64_t totallen, bool first,
              bool last, uint8_t ctx, bool ip_cksum, bool tcpudp_cksum, bool tse, int hdr_len);
-
+  void StartTimer();
+  void StopTimer();
+  
  private:
   uint16_t ReadRdh_1(uint32_t n);
   uint16_t ReadRdt_1(uint32_t n);
@@ -509,7 +529,8 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver> {
   uint32_t ReadTdt_1(uint32_t n);
   uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_t* rxflag,
                     bool* process_rsc, uint32_t* rnt, uint32_t* rxhead);
-
+  void Fire() override;
+  
   const IxgbeDriver& root_;
   e10k_queue_t& ixgq_;
   IxgbeDriver::e10Kq& ixgmq_;

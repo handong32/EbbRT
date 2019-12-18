@@ -59,3 +59,11 @@ void ebbrt::NetworkManager::Interface::Send(std::unique_ptr<IOBuf> b,
                                             PacketInfo pinfo) {
   ether_dev_.Send(std::move(b), std::move(pinfo));
 }
+
+void ebbrt::NetworkManager::Config(std::string s, uint32_t v) {
+  interface_->Config(std::move(s), v);
+}
+
+void ebbrt::NetworkManager::Interface::Config(std::string s, uint32_t v) {
+  ether_dev_.Config(std::move(s), v);
+}

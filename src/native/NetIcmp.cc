@@ -12,7 +12,7 @@ void ebbrt::NetworkManager::Interface::ReceiveIcmp(
     EthernetHeader& eth_header, Ipv4Header& ip_header,
     std::unique_ptr<MutIOBuf> buf) {
   auto packet_len = buf->ComputeChainDataLength();
-  ebbrt::kprintf("ReceiveIcmp() packet_len=%u\n", packet_len);
+  //ebbrt::kprintf("ReceiveIcmp() packet_len=%u\n", packet_len);
 
   if (unlikely(packet_len < sizeof(IcmpHeader)))
     return;
@@ -20,7 +20,7 @@ void ebbrt::NetworkManager::Interface::ReceiveIcmp(
   auto dp = buf->GetMutDataPointer();
   auto& icmp_header = dp.Get<IcmpHeader>();
 
-  ebbrt::kprintf("ReceiveIcmp() packet_len=%u\n", packet_len);
+  //ebbrt::kprintf("ReceiveIcmp() packet_len=%u\n", packet_len);
 #ifndef __EBBRT_ENABLE_BAREMETAL_NIC__
   // software checksum
   if (IpCsum(*buf))
@@ -51,7 +51,7 @@ void ebbrt::NetworkManager::Interface::ReceiveIcmp(
     PacketInfo pinfo;
     pinfo.flags = 0;
     // hijacking ping to dump ixgbe statistics
-    pinfo.get_stats = false;
+    pinfo.get_stats = true;
 //#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
     // hardware ip checksum offload
 //    pinfo.flags |= PacketInfo::kNeedsIpCsum;
