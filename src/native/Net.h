@@ -56,6 +56,7 @@ class EthernetDevice {
   virtual void Send(std::unique_ptr<IOBuf> buf,
                     PacketInfo pinfo = PacketInfo()) = 0;
   virtual void Config(std::string s, uint32_t v) = 0;
+  virtual std::string ReadNic() = 0;
   virtual const EthernetAddress& GetMacAddress() = 0;
   virtual ~EthernetDevice() {}
 };
@@ -248,6 +249,7 @@ class NetworkManager : public StaticSharedEbb<NetworkManager> {
     void SendIp(std::unique_ptr<MutIOBuf> buf, Ipv4Address src, Ipv4Address dst,
                 uint8_t proto, PacketInfo pinfo = PacketInfo());
     void Config(std::string s, uint32_t v);
+    std::string ReadNic();
     
     const EthernetAddress& MacAddress();
     const ItfAddress* Address() const { return address_.get(); }
@@ -315,6 +317,7 @@ class NetworkManager : public StaticSharedEbb<NetworkManager> {
   Interface& NewInterface(EthernetDevice& ether_dev);
   Ipv4Address IpAddress();
   void Config(std::string s, uint32_t v);
+  std::string ReadNic();
   
  private:
   Future<void> StartDhcp();  

@@ -83,6 +83,7 @@ class IxgbeDriver : public EthernetDevice {
   //void Run();
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) override;
   void Config(std::string s, uint32_t v) override;
+  std::string ReadNic() override;
   const EthernetAddress& GetMacAddress() override;
 
  protected:
@@ -105,8 +106,8 @@ class IxgbeDriver : public EthernetDevice {
   static const constexpr uint32_t NTXDESCS = 8192;
   static const constexpr uint32_t NRXDESCS = 8192;
 #else
-  static const constexpr uint32_t NTXDESCS = 64;
-  static const constexpr uint32_t NRXDESCS = 64;
+  static const constexpr uint32_t NTXDESCS = 512;
+  static const constexpr uint32_t NRXDESCS = 512;
 #endif
 
   // Linux Defaults
@@ -116,7 +117,7 @@ class IxgbeDriver : public EthernetDevice {
   //static const constexpr uint32_t RXBUFSZ = 4096;
   //static const constexpr uint32_t RXBUFSZ = 16384;
 
-  static const constexpr uint8_t ITR_INTERVAL = 200;
+  static const constexpr uint8_t ITR_INTERVAL = 8;
   // 3 bits only (0 - 7) in (RSC_DELAY + 1) * 4 us
   static const constexpr uint8_t RSC_DELAY = 1;
   
@@ -144,10 +145,19 @@ class IxgbeDriver : public EthernetDevice {
       // TODO: should be optimized
       rsc_chain_.reserve(NRXDESCS+1);
 
+      // keep a log of number of idle times
+      idle_times_.reserve(NRXDESCS);
+
+      // keep track of context descriptors
+      tx_iseop.reserve(NRXDESCS);
+      for (uint32_t k = 0; k < NRXDESCS; k++) {
+        tx_iseop[k] = false;
+      }
+      
       // keeps a log of descriptors where eop == 1
       // used to coalesce reclaiming of tx descriptors
-      // once the threshold of some limit is hit
-      send_to_watch.reserve(NRXDESCS);
+      // once the threshold of some limit is hit      
+      //send_to_watch.reserve(NRXDESCS);
 
       // RX ring buffer allocation
       auto sz = align::Up(sizeof(rdesc_legacy_t) * NRXDESCS, 4096);
@@ -170,14 +180,14 @@ class IxgbeDriver : public EthernetDevice {
       tx_ring_ = static_cast<tdesc_legacy_t*>(addr);
 
       // TX adv context buffer allocation
-      sz = align::Up(sizeof(bool) * NTXDESCS, 4096);
+      /*sz = align::Up(sizeof(bool) * NTXDESCS, 4096);
       order = Fls(sz - 1) - pmem::kPageShift + 1;
       page = page_allocator->Alloc(order, nid);
       kbugon(page == Pfn::None(), "ixgbe: page allocation failed in %s",
              __FUNCTION__);
       addr = reinterpret_cast<void*>(page.ToAddr());
       memset(addr, 0, sz);
-      tx_isctx_ = static_cast<bool*>(addr);
+      tx_isctx_ = static_cast<bool*>(addr);*/
 
 #ifdef TX_HEAD_WB
       // TODO: not sure how much exactly to allocate for head wb addr
@@ -222,11 +232,17 @@ class IxgbeDriver : public EthernetDevice {
 
     std::vector<std::unique_ptr<MutIOBuf>> circ_buffer_;
     std::vector<std::pair<uint32_t, uint32_t>> rsc_chain_;
-    std::vector<uint32_t> send_to_watch;
+    std::unordered_map<uint32_t, uint32_t> idle_times_;
+    std::vector<std::pair<uint32_t, uint32_t>> send_to_watch;
+    std::vector<bool> tx_iseop;
+    std::ostringstream str_stats;
+    //std::vector<uint32_t> send_to_watch;
       
     rdesc_legacy_t* rx_ring_;
     tdesc_legacy_t* tx_ring_;
-    bool* tx_isctx_;
+    
+    //std::vector<bool> tx_isctx;
+    //bool* tx_isctx_;
     bool rsc_used;
     int hanc;
 #ifdef TX_HEAD_WB
@@ -241,12 +257,19 @@ class IxgbeDriver : public EthernetDevice {
     uint64_t stat_num_rx_bytes{0};
     uint64_t stat_num_tx_bytes{0};
     uint64_t time_us{0};
-    uint64_t ttotalt{0};
+    uint64_t time_send{0};
+    uint64_t time_idle_min{999999};
+    uint64_t time_idle_max{0};
+    uint64_t total_idle_time{0};
+    uint64_t totalInterrupts{0};
     uint64_t totalCycles{0};
     uint64_t totalIns{0};
     uint64_t totalLLCmisses{0};
+    uint32_t rapl_val{666};
+    uint32_t itr_val{8};
     double totalNrg{0.0};
     double totalTime{0.0};
+    double totalPower{0.0};
     
     bool stat_start{false};
     bool stat_init{false};
@@ -509,10 +532,10 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver>, Timer::
   void ReclaimTx();
   void ReclaimRx();
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo);
-  void AddContext(uint8_t idx, uint8_t maclen, uint16_t iplen, uint8_t l4len,
-                  enum l4_type l4type);
-  void AddTx(uint64_t pa, uint64_t len, uint64_t totallen, bool first,
-             bool last, uint8_t ctx, bool ip_cksum, bool tcpudp_cksum, bool tse, int hdr_len);
+  //void AddContext(uint8_t idx, uint8_t maclen, uint16_t iplen, uint8_t l4len,
+  //               enum l4_type l4type);
+  //void AddTx(uint64_t pa, uint64_t len, uint64_t totallen, bool first,
+  //           bool last, uint8_t ctx, bool ip_cksum, bool tcpudp_cksum, bool tse, int hdr_len);
   void StartTimer();
   void StopTimer();
   

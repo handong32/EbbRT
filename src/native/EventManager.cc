@@ -105,11 +105,13 @@ SwitchStack(uintptr_t first_param, uintptr_t stack, void (*func)(uintptr_t));
 
 void ebbrt::EventManager::StartProcessingEvents() {
   auto stack_top = (active_event_context_.stack + kStackPages).ToAddr();
+  //ebbrt::kprintf_force("StartProcessingEvents()\n");
   SwitchStack(reinterpret_cast<uintptr_t>(this), stack_top, CallProcess);
 }
 
 void ebbrt::EventManager::CallProcess(uintptr_t mgr) {
   auto pmgr = reinterpret_cast<EventManager*>(mgr);
+  //ebbrt::kprintf_force("CallProcess()\n");
   pmgr->Process();
 }
 
@@ -130,6 +132,9 @@ template <typename F> void ebbrt::EventManager::InvokeFunction(F&& f) {
 void ebbrt::EventManager::Process() {
   auto stack_top = (active_event_context_.stack + kStackPages).ToAddr();
   Cpu::GetMine().SetEventStack(stack_top);
+  unsigned long ecx, edx, eax;
+  ecx = edx = eax = 0;
+  
 // process an interrupt without halting
 // the sti instruction starts processing interrupts *after* the next
 // instruction is executed (to allow for a halt for example). The nop gives us
@@ -141,6 +146,7 @@ process:
   // If an interrupt was processed then we would not reach this code (the
   // interrupt does not return here but instead to the top of this function)
 
+  //ebbrt::kprintf_force("p1\n");
   if (!tasks_.empty()) {
     auto f = std::move(tasks_.front());
     tasks_.pop_front();
@@ -153,9 +159,20 @@ process:
     InvokeFunction(*idle_callback_);
     goto process;
   }
-
+  
+  asm volatile(".byte 0x0f, 0x01, 0xc8;"
+	       :: "a" ((void*)&flags), "c" (ecx), "d"(edx));
+  ecx = 1;
+  
+  //eax = 0x20;
+  eax = 0x60;
+  //eax = 0x30;
+  
+  asm volatile("sti; .byte 0x0f, 0x01, 0xc9;"
+	       :: "a" (eax), "c" (ecx));
+  
   asm volatile("sti;"
-               "hlt;");
+	       "hlt;");
   kabort("Woke up from halt?!?!");
 }
 
@@ -204,6 +221,7 @@ void ebbrt::EventManager::CallSync(uintptr_t mgr) {
   // "fresh" event. Therefore if the sync_contexts_ stack is empty, we just go
   // back to the event loop
   if (unlikely(pmgr->sync_contexts_.empty())) {
+    //ebbrt::kprintf_force("CallSync, Process()\n");
     pmgr->Process();
   } else {
     // save this stack
@@ -340,6 +358,7 @@ void ebbrt::EventManager::ProcessInterrupt(int num) {
     auto& f = ih->func;
     InvokeFunction(f);
   }
+  //ebbrt::kprintf_force("ProcessInterrupt %d\n", num);
   Process();
 }
 
@@ -410,12 +429,15 @@ void ebbrt::EventManager::Fire() {
       tasks.pop();
     }
   } else {
+    //ebbrt::kprintf("EventManager()::Fire()\n");
     StartTimer();
   }
 }
 
 void ebbrt::EventManager::StartTimer() {
-  timer->Start(*this, std::chrono::milliseconds(1),
+  //timer->Start(*this, std::chrono::milliseconds(2),
+  //             /* repeat = */ false);
+  timer->Start(*this, std::chrono::microseconds(1500),
                /* repeat = */ false);
 }
 

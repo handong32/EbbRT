@@ -165,6 +165,7 @@ ebbrt::VirtioNetRep::VirtioNetRep(const VirtioNetDriver& root)
       circ_buffer_tail_(0) {}
 
 void ebbrt::VirtioNetDriver::Config(std::string s, uint32_t v) {}
+std::string ebbrt::VirtioNetDriver::ReadNic() { return ""; }
 
 void ebbrt::VirtioNetDriver::Send(std::unique_ptr<IOBuf> buf,
                                   PacketInfo pinfo) {

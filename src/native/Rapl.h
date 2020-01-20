@@ -111,6 +111,45 @@ namespace rapl {
 	//ebbrt::kprintf("Total Package Energy used: %.6fJ\n", after - counter_offset);
     }
 
+    void SetLimit(uint32_t v) {
+      uint64_t result = ebbrt::msr::Read(kMsrPkgRaplPowerLimit);
+      uint64_t m = 0x7FFF;
+      uint32_t npower = (uint32_t)(v / 0.125);
+      
+      // resetting values
+      result = result & (~m);
+      result = result & (~(m << 32));
+      
+      // new power
+      result = result | npower;
+      result = result | ((uint64_t)npower << 32);
+
+      // set clamp
+      result |= 1LL << 15;
+      result |= 1LL << 16;
+      result |= 1LL << 47;
+      result |= 1LL << 48;
+
+      uint32_t low = result & 0xFFFFFFFF;
+      uint32_t high = (result >> 32) & 0xFFFFFFFF;
+      asm volatile("wrmsr" : : "c"(kMsrPkgRaplPowerLimit), "a"(low), "d"(high));
+      
+      result=ebbrt::msr::Read(kMsrPkgRaplPowerLimit);
+      ebbrt::kprintf("%u Package power limits are %s\n", v, (result >> 63) ? "locked" : "unlocked");
+      double pkg_power_limit_1 = rapl_power_units*(double)((result>>0)&0x7FFF);
+      double pkg_time_window_1 = rapl_time_units*(double)((result>>17)&0x007F);
+      ebbrt::kprintf("Package power limit #1: %.3fW for %.6fs (%s, %s)\n",
+	     pkg_power_limit_1, pkg_time_window_1,
+	     (result & (1LL<<15)) ? "enable power limit" : "disabled",
+	     (result & (1LL<<16)) ? "clamped" : "not_clamped");
+      double pkg_power_limit_2 = rapl_power_units*(double)((result>>32)&0x7FFF);
+      double pkg_time_window_2 = rapl_time_units*(double)((result>>49)&0x007F);
+      ebbrt::kprintf("Package power limit #2: %.3fW for %.6fs (%s, %s)\n", 
+	     pkg_power_limit_2, pkg_time_window_2,
+	     (result & (1LL<<47)) ? "enable power limit" : "disabled",
+	     (result & (1LL<<48)) ? "clamped" : "not_clamped");
+    }
+    
     double Read();
   private:
     double rapl_power_units{0.0};

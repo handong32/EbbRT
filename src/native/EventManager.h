@@ -112,7 +112,8 @@ class EventManager : Timer::Hook {
   size_t pending_generation_ = 0;
   std::queue<MovableFunction<void()>> prev_rcu_tasks_;
   std::queue<MovableFunction<void()>> curr_rcu_tasks_;
-
+  unsigned long flags;
+  
   struct RemoteData : CacheAligned {
     ebbrt::SpinLock lock;
     std::list<MovableFunction<void()>> tasks;
