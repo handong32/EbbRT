@@ -116,7 +116,7 @@ new file mode 100644
 index 0000000..68b7fbe
 --- /dev/null
 +++ b/newlib/libc/sys/ebbrt/syscalls.c
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,304 @@
 +#include <sys/types.h>
 +#include <sys/stat.h>
 +#include <sys/fcntl.h>
@@ -262,3 +262,162 @@ index 0000000..68b7fbe
 +  return ebbrt_newlib_gettimeofday(p, z);
 +}
 +
++int fcntl(int s, int cmd, ...)
++{
++  return ebbrt_newlib_fcntl(s, cmd);
++}
++
++char* getcwd(char *buf, size_t size)
++{
++  return ebbrt_newlib_getcwd(buf, size);
++}
++
++int dup(int oldfd)
++{
++  return ebbrt_newlib_dup(oldfd);
++}
++
++int clock_gettime (clockid_t clock_id, struct timespec *tp)
++{
++  return ebbrt_newlib_clock_gettime();
++}
++int clock_settime (clockid_t clock_id, const struct timespec *tp)
++{
++  return ebbrt_newlib_clock_settime();
++}
++int clock_getres (clockid_t clock_id, struct timespec *res)
++{
++  return ebbrt_newlib_clock_getres();
++}
++
++int closedir (DIR *d)
++{
++  return ebbrt_newlib_closedir(d);
++}
++
++DIR *opendir(const char * c)
++{
++  return ebbrt_newlib_opendir(c);
++}
++
++pid_t getppid()
++{
++  ebbrt_newlib_getppid();
++  return -1;
++}
++
++struct dirent * readdir(DIR *d)
++{
++  return ebbrt_newlib_readdir(d);
++}
++
++int pipe (int *fd)
++{
++  return ebbrt_newlib_pipe(fd);
++}
++
++int sched_yield ()
++{
++  return ebbrt_newlib_sched_yield();
++}
++
++mode_t umask (mode_t mask)
++{
++  ebbrt_newlib_umask();
++  return -1;
++}
++
++int symlink(const char *path1, const char *path2)
++{
++  return ebbrt_newlib_symlink(path1, path2);
++}
++
++int rmdir(const char *path)
++{
++  return ebbrt_newlib_rmdir(path);
++}
++int mkdir (const char *path, mode_t mode)
++{
++  return ebbrt_newlib_mkdir(path);
++}
++
++int chdir (const char *path)
++{
++  return ebbrt_newlib_chdir(path);
++}
++
++char* ttyname(int fd)
++{
++  return ebbrt_newlib_ttyname(fd);
++}
++int fdatasync(int fd)
++{
++  return ebbrt_newlib_fdatasync(fd);
++}
++uid_t getuid() {
++    return ebbrt_newlib_getuid();
++}
++
++uid_t getgid(void) {
++    return ebbrt_newlib_getgid();
++}
++
++uid_t geteuid() {
++    return ebbrt_newlib_geteuid();
++}
++
++uid_t getegid(void) {
++    return ebbrt_newlib_getegid();
++}
++
++int fsync (int fd)
++{
++  return ebbrt_newlib_fsync(fd);
++}
++int execv (const char *path, char *const argv[])
++{
++  return ebbrt_newlib_execv (path, argv);
++}
++int chmod (const char *path, mode_t mode)
++{
++  return ebbrt_newlib_chmod();
++}
++int access (const char *fn, int flags)
++{
++  return ebbrt_newlib_access(fn, flags);
++}
++int utime (const char *path, char *times)
++{
++  return ebbrt_newlib_utime(path, times);
++}
++int lstat (const char *__restrict pathname, struct stat *__restrict pstat)
++{
++  return ebbrt_newlib_lstat();
++}
++struct passwd* getpwnam (const char *name)
++{
++  ebbrt_newlib_getpwnam();
++  return NULL;
++}
++struct passwd* getpwuid (uid_t uid)
++{
++  ebbrt_newlib_getpwuid();
++  return NULL;
++}
++int select (int n, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout)
++{
++  return ebbrt_newlib_select();
++}
++int getrusage(int who, struct rusage *rusage)
++{
++  return ebbrt_newlib_getrusage();
++}
++
++int getrlimit(int resource, struct rlimit* rlim)
++{
++  return ebbrt_newlib_getrlimit();
++}
++int setrlimit(int resource, const struct rlimit* rlim)
++{
++  return ebbrt_newlib_setrlimit();
++}

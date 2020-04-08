@@ -88,7 +88,7 @@ extern "C" int ebbrt_newlib_fstat(int file, struct stat* st) {
   return 0;
 }
 
-extern "C" int ebbrt_newlib_stat(const char* file, struct stat* st) {
+extern "C" int ebbrt_newlib_stat(const  char* file, struct stat* st) {
   EBBRT_UNIMPLEMENTED();
   return 0;
 }
@@ -156,6 +156,181 @@ extern "C" int ebbrt_newlib_gettimeofday(struct timeval* p, void* z) {
       std::chrono::duration_cast<std::chrono::microseconds>(d).count() %
       1000000;
   return 0;
+}
+
+extern "C" int ebbrt_newlib_fcntl(int s, int cmd) {
+  EBBRT_UNIMPLEMENTED();
+  return 0;
+}
+
+extern "C" char* ebbrt_newlib_getcwd(char *buf, size_t size) {
+  EBBRT_UNIMPLEMENTED();
+  return 0;
+}
+
+extern "C" int ebbrt_newlib_dup(int oldfd) {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_clock_gettime ()
+{
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_clock_settime()
+{
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_clock_getres()
+{
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_closedir(DIR *d) {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_opendir(const char* c) {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" void ebbrt_newlib_getppid() {
+  EBBRT_UNIMPLEMENTED();
+}
+
+extern "C" struct dirent * ebbrt_newlib_readdir(DIR *d)
+{
+  EBBRT_UNIMPLEMENTED();
+  return NULL;
+}
+
+extern "C" int ebbrt_newlib_pipe (int *fd) {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_sched_yield() {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" void ebbrt_newlib_umask () {
+  EBBRT_UNIMPLEMENTED();
+}
+
+extern "C" int ebbrt_newlib_symlink(const char *path1, const char *path2)
+{
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_rmdir(const char *path) {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_mkdir(const char *path) {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_chdir(const char *path) {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" char* ebbrt_newlib_ttyname(int) {
+  EBBRT_UNIMPLEMENTED();
+  return NULL;
+}
+
+extern "C" int ebbrt_newlib_fdatasync(int) {
+  EBBRT_UNIMPLEMENTED();
+  return 0;
+}
+
+extern "C" int ebbrt_newlib_getuid() {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_getgid() {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_geteuid() {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_getegid() {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_fsync(int) {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_execv (const char *path, char *const argv[]) {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_chmod() {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_access (const char *fn, int flags) {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_utime (const char *path, char *times) {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_lstat () {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" void ebbrt_newlib_getpwnam () {
+  EBBRT_UNIMPLEMENTED();
+}
+extern "C" void ebbrt_newlib_getpwuid () {
+  EBBRT_UNIMPLEMENTED();
+}
+
+extern "C" int ebbrt_newlib_select () {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_getrusage() {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_getrlimit() {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
+}
+
+extern "C" int ebbrt_newlib_setrlimit() {
+  EBBRT_UNIMPLEMENTED();
+  return -1;
 }
 
 struct RLock {

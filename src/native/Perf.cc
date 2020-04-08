@@ -150,14 +150,14 @@ ebbrt::perf::PerfCounter::PerfCounter(ebbrt::perf::PerfEvent evt) : evt_{evt} {
       if (((pmcs >> i) & 0x1) == 0) {
         pmc_num_ = i;
         pmcs |= (0x1u << i);
-        kprintf("DEBUG#%d %x \n", pmc_num_, pmcs);
+        //kprintf("DEBUG#%d %x \n", pmc_num_, pmcs);
         perfevtsel.usermode = 1;
         perfevtsel.osmode = 1;
         perfevtsel.en = 1;
         ebbrt::msr::Write(kIa32PerfEvtSelMsr(pmc_num_), perfevtsel.val);
         counter_offset_ = ebbrt::msr::Read(kIa32Pmc(pmc_num_));
-        kprintf("Perf counter #%d initialized to evt=%u\n", pmc_num_,
-                static_cast<uint8_t>(evt_));
+        //kprintf("Perf counter #%d initialized to evt=%u\n", pmc_num_,
+        //        static_cast<uint8_t>(evt_));
         return;
       }
     }

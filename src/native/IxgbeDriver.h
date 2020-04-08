@@ -22,11 +22,12 @@
 #include "Rapl.h"
 
 // Receive Side Scaling (RSC) enabled
-//#define RSC_EN
+#define RSC_EN
 // Direct Cache Access (DCA) enabled
 //#define DCA_ENABLE
 // Transmit Header Writeback enabled
 //#define TX_HEAD_WB
+//#define JUMBO_EN
 
 // Collect Statistics Flag
 #define STATS_EN
@@ -38,15 +39,15 @@ namespace ebbrt {
 // Per-core receive and transmit queue
 typedef struct {
   rdesc_legacy_t* rx_ring;
-  size_t rx_head;
-  size_t rx_tail;
-  size_t rx_size;
+  uint32_t rx_head;
+  uint32_t rx_tail;
+  uint32_t rx_size;
 
   tdesc_legacy_t* tx_ring;
   uint32_t* tx_head;
-  size_t tx_tail;
-  size_t tx_last_tail;
-  size_t tx_size;
+  uint32_t tx_tail;
+  uint32_t tx_last_tail;
+  uint32_t tx_size;
   bool* tx_isctx;
 
   // buffers holding packet data
@@ -82,6 +83,10 @@ class IxgbeDriver : public EthernetDevice {
   
   //void Run();
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) override;
+  //void SendUdp(std::unique_ptr<IOBuf> buf, uint64_t len) override;
+  //void SendTCPUnchained(std::unique_ptr<IOBuf> buf, uint64_t len) override;
+  //void SendTCPUnchained(std::unique_ptr<IOBuf> buf, uint64_t len) override;
+  
   void Config(std::string s, uint32_t v) override;
   std::string ReadNic() override;
   const EthernetAddress& GetMacAddress() override;
@@ -111,15 +116,19 @@ class IxgbeDriver : public EthernetDevice {
 #endif
 
   // Linux Defaults
-  static const constexpr uint32_t RXBUFSZ = 2048;
+  //static const constexpr uint32_t RXBUFSZ = 2048;
+  //static const constexpr uint32_t RXBUFSZ = 8192;
   static const constexpr uint32_t BSIZEHEADER = 256;
-    
-  //static const constexpr uint32_t RXBUFSZ = 4096;
+
+  static const constexpr uint32_t RXBUFSZ = 4092;
+  //static const constexpr uint32_t RXBUFSZ = 8192;
   //static const constexpr uint32_t RXBUFSZ = 16384;
 
-  static const constexpr uint8_t ITR_INTERVAL = 8;
-  // 3 bits only (0 - 7) in (RSC_DELAY + 1) * 4 us
-  static const constexpr uint8_t RSC_DELAY = 1;
+  // 8 bits (3 - 11) in          (ITR_INTERVAL * 2 us)
+  static const constexpr uint8_t ITR_INTERVAL = 32;
+  
+  // 3 bits only (0 - 7) in      (RSC_DELAY + 1) * 4 us
+  static const constexpr uint8_t RSC_DELAY = 7;
   
   // DMA Tx TCP Max Allow Size Requests — DTXMXSZRQ
   static const constexpr uint16_t MAX_BYTES_NUM_REQ = 0x10;
@@ -128,7 +137,7 @@ class IxgbeDriver : public EthernetDevice {
   // Class with per core queue data structures
   class e10Kq {
    public:
-    e10Kq(size_t idx, Nid nid)
+    e10Kq(uint32_t idx, Nid nid)
         : rx_head_(0), rx_tail_(0), rx_size_(NRXDESCS), tx_tail_(0),
           tx_last_tail_(0), tx_size_(NTXDESCS), idx_(idx), rxflag_(0),
           rsc_used(false), hanc{0} {
@@ -214,22 +223,30 @@ class IxgbeDriver : public EthernetDevice {
                     "rx_size_bytes_ not 128 byte aligned\n");
       ebbrt::kbugon((tx_size_bytes_ & 0x7F) != 0,
                     "tx_size_bytes_ not 128 byte aligned\n");
+
+      tx_desc_counts.reserve(100);
+      rx_desc_counts.reserve(100);
+      for(int i=0;i<100;i++) {
+	tx_desc_counts.emplace_back(0);
+	rx_desc_counts.emplace_back(0);
+      }
     }
     
-    size_t rx_head_;
-    size_t rx_tail_;
-    size_t rx_size_;
-    size_t tx_tail_;
-    size_t tx_last_tail_;
-    size_t tx_size_;
-    size_t idx_;
-    size_t rx_size_bytes_;
-    size_t tx_size_bytes_;
+    uint32_t rx_head_;
+    uint32_t rx_tail_;
+    uint32_t rx_size_;
+    uint32_t tx_tail_;
+    uint32_t tx_last_tail_;
+    uint32_t tx_size_;
+    uint32_t idx_;
+    uint32_t rx_size_bytes_;
+    uint32_t tx_size_bytes_;
     uint64_t rxaddr_;
     uint64_t txaddr_;
     uint64_t txhwbaddr_;
     uint64_t rxflag_;
-
+    uint64_t cleaned_count{0};
+      
     std::vector<std::unique_ptr<MutIOBuf>> circ_buffer_;
     std::vector<std::pair<uint32_t, uint32_t>> rsc_chain_;
     std::unordered_map<uint32_t, uint32_t> idle_times_;
@@ -248,7 +265,7 @@ class IxgbeDriver : public EthernetDevice {
 #ifdef TX_HEAD_WB
     uint32_t* tx_head_;
 #else
-    size_t tx_head_;
+    uint32_t tx_head_;
 #endif
 
     // stats
@@ -265,8 +282,11 @@ class IxgbeDriver : public EthernetDevice {
     uint64_t totalCycles{0};
     uint64_t totalIns{0};
     uint64_t totalLLCmisses{0};
+    uint64_t fireCount{0};
     uint32_t rapl_val{666};
     uint32_t itr_val{8};
+    std::vector<uint32_t> tx_desc_counts;
+    std::vector<uint32_t> rx_desc_counts;
     double totalNrg{0.0};
     double totalTime{0.0};
     double totalPower{0.0};
@@ -463,7 +483,8 @@ class IxgbeDriver : public EthernetDevice {
   void WriteMngtxmap(uint32_t m);
 
   void WriteRxfeccerr0(uint32_t m);
-
+  void WriteMaxfrs(uint32_t m);
+  
   uint8_t ReadRdrxctlDmaidone();
 
   void ReadEicr();
@@ -505,7 +526,7 @@ class IxgbeDriver : public EthernetDevice {
   void DumpStats();
   e10k_queue_t& GetQueue() const { return *ixgq; }
 
-  e10Kq& GetMultiQueue(size_t index) const { return *ixgmq[index]; }
+  e10Kq& GetMultiQueue(uint32_t index) const { return *ixgmq[index]; }
 
   pci::Device& dev_;
   pci::Bar& bar0_;
@@ -532,6 +553,10 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver>, Timer::
   void ReclaimTx();
   void ReclaimRx();
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo);
+  void SendUdp(std::unique_ptr<IOBuf> buf, uint64_t len, PacketInfo pinfo);
+  void SendTCPChained(std::unique_ptr<IOBuf> buf, uint64_t len, uint64_t num_chains, PacketInfo pinfo);
+  void SendTCPUnchained(std::unique_ptr<IOBuf> buf, uint64_t len, PacketInfo pinfo);
+  
   //void AddContext(uint8_t idx, uint8_t maclen, uint16_t iplen, uint8_t l4len,
   //               enum l4_type l4type);
   //void AddTx(uint64_t pa, uint64_t len, uint64_t totallen, bool first,

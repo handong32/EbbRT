@@ -1148,7 +1148,8 @@ void ebbrt::NetworkManager::TcpEntry::SendSegment(TcpSegment& segment) {
   pinfo.tcp_len = len - pinfo.tcp_hdr_len;
   
   // XXX: Actually store the MSS instead of making this assumption
-  size_t mss = 1460;
+  //size_t mss = 1460;
+  size_t mss = 2048;
   if (segment.tcp_len > mss) {
     pinfo.gso_type = PacketInfo::kGsoTcpv4;
     pinfo.hdr_len = segment.th.HdrLen();

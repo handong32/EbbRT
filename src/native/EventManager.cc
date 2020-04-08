@@ -162,11 +162,18 @@ process:
   
   asm volatile(".byte 0x0f, 0x01, 0xc8;"
 	       :: "a" ((void*)&flags), "c" (ecx), "d"(edx));
+
+  // https://elixir.bootlin.com/linux/v4.15.1/source/arch/x86/include/asm/mwait.h#L100
   ecx = 1;
   
   //eax = 0x20;
-  eax = 0x60;
-  //eax = 0x30;
+  //eax = 0x60;
+  
+  // C1E state
+  //eax = 0x1;
+
+  // C7 state
+  eax = 0x30;
   
   asm volatile("sti; .byte 0x0f, 0x01, 0xc9;"
 	       :: "a" (eax), "c" (ecx));

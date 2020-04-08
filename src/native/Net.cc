@@ -36,17 +36,12 @@ void ebbrt::NetworkManager::Interface::Receive(std::unique_ptr<MutIOBuf> buf,
     break;
   }
   default: {
-    ebbrt::kprintf("NetworkManager::Interface::Receive(): Unknown eth_header.type=0x%X packet_len=%u\n", ntohs(eth_header.type), packet_len);
-    ebbrt::kabort("NetworkManager::Interface::Receive()\n");
-    /*for (int i = 0; i < (int)packet_len; i+=8) {
-      if (i+8 < (int)packet_len) {
-	ebbrt::kprintf("%02X%02X%02X%02X%02X%02X%02X%02X\n", p1[i], p1[i+1], p1[i+2], p1[i+3], p1[i+4], p1[i+5], p1[i+6], p1[i+7]);
-      } else {
-	for(int j = i; j < (int)packet_len; j++) {
-	  ebbrt::kprintf("%02X\n", p1[j]);
-	}
-      }
-      }*/
+    //ebbrt::kprintf("NetworkManager::Interface::Receive(): Unknown eth_header.type=0x%X packet_len=%u\n", ntohs(eth_header.type), packet_len);
+    /*auto p1 = reinterpret_cast<uint8_t*>(buf->MutData());
+    for (int i = 0; i < 256; i+=8) {
+      ebbrt::kprintf("%02X%02X%02X%02X%02X%02X%02X%02X\n", p1[i], p1[i+1], p1[i+2], p1[i+3], p1[i+4], p1[i+5], p1[i+6], p1[i+7]);
+    }
+    ebbrt::kabort("NetworkManager::Interface::Receive()\n");*/
   }
   }
 }

@@ -51,6 +51,12 @@ enum l4_type { l4_type_udp = 0, l4_type_tcp, l4_type_sctp, l4_type_rsv };
 #define RXFLAG_L4CS (1 << 2)
 #define RXFLAG_L4CS_VALID (1 << 3)
 
+#define IXGBE_RX_BUFFER_WRITE 15
+
+#define mb()	asm volatile("mfence" ::: "memory")
+#define rmb()	asm volatile("lfence" ::: "memory")
+#define wmb()	asm volatile("sfence" ::: "memory")
+
 /***********************
    * RX
    * Descriptors

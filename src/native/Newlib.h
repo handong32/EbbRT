@@ -14,7 +14,8 @@ extern "C" {
 
 typedef void* _LOCK_T;
 typedef void* _LOCK_RECURSIVE_T;
-
+typedef struct __dirstream DIR;
+  
 extern void ebbrt_newlib_lock_init(_LOCK_T*);
 extern void ebbrt_newlib_lock_init_recursive(_LOCK_RECURSIVE_T*);
 extern void ebbrt_newlib_lock_close(_LOCK_T*);
@@ -48,7 +49,42 @@ extern void* ebbrt_newlib_realloc(void*, size_t);
 extern void* ebbrt_newlib_calloc(size_t, size_t);
 extern void* ebbrt_newlib_memalign(size_t, size_t);
 extern int ebbrt_newlib_gettimeofday(struct timeval *, void *);
-
+extern int ebbrt_newlib_fcntl(int , int);
+extern char* ebbrt_newlib_getcwd(char * , size_t);
+extern int ebbrt_newlib_dup(int);
+extern int ebbrt_newlib_clock_gettime();
+extern int ebbrt_newlib_clock_settime();
+extern int ebbrt_newlib_clock_getres();
+extern int ebbrt_newlib_closedir (DIR *);
+extern int ebbrt_newlib_opendir (const char*);
+extern void ebbrt_newlib_getppid();
+extern struct dirent * ebbrt_newlib_readdir(DIR *d);
+extern int ebbrt_newlib_pipe (int *);
+extern int ebbrt_newlib_sched_yield();
+extern void ebbrt_newlib_umask ();
+extern int ebbrt_newlib_symlink(const char *path1, const char *path2);
+extern int ebbrt_newlib_rmdir(const char *path);
+extern int ebbrt_newlib_mkdir(const char *path);
+extern int ebbrt_newlib_chdir(const char *path);
+extern char* ebbrt_newlib_ttyname(int);
+extern int ebbrt_newlib_fdatasync(int);
+extern int ebbrt_newlib_getuid();
+extern int ebbrt_newlib_getgid();
+extern int ebbrt_newlib_geteuid();
+extern int ebbrt_newlib_getegid();
+extern int ebbrt_newlib_fsync(int);
+extern int ebbrt_newlib_execv (const char *path, char *const argv[]);
+extern int ebbrt_newlib_chmod();
+extern int ebbrt_newlib_access (const char *fn, int flags);
+extern int ebbrt_newlib_utime (const char *path, char *times);
+extern int lstat ();
+extern void ebbrt_newlib_getpwnam ();
+extern void ebbrt_newlib_getpwuid ();
+extern int ebbrt_newlib_select ();
+extern int ebbrt_newlib_getrusage();
+extern int ebbrt_newlib_getrlimit();
+extern int ebbrt_newlib_setrlimit();
+  
 #ifdef __cplusplus
 }
 #endif
