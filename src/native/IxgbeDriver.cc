@@ -669,7 +669,7 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     // hardware limits sending over 40 descriptors per packet, have to manually coalesce here
     // hopefully not too often
     if(num_chains > 38) {
-      ixgmq_.tx_desc_counts[39] ++;
+      //ixgmq_.tx_desc_counts[39] ++;
       //ebbrt::kprintf_force("*** num_chains=%d > 38\n", num_chains);
       b = MakeUniqueIOBuf(len);
       auto mdata = b->MutData();
@@ -681,10 +681,10 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
       SendTCPUnchained(std::move(b), len, pinfo);
       
     } else if(buf->IsChained() && num_chains <= 38) {
-      ixgmq_.tx_desc_counts[num_chains] ++;
+      //ixgmq_.tx_desc_counts[num_chains] ++;
       SendTCPChained(std::move(buf), len, num_chains, pinfo);
     } else { //Not Chained
-      ixgmq_.tx_desc_counts[1] ++;
+      //ixgmq_.tx_desc_counts[1] ++;
       SendTCPUnchained(std::move(buf), len, pinfo);
     }
   } 
@@ -2120,7 +2120,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
        received MSS
   *****/
   
-  WriteRscctl(i, 0x1 | (0x11 << 2));  // RSCEN=1, MAXDESC=  (0x1) * SRRCTL.BSIZEPACKET < 64KB
+  WriteRscctl(i, 0x1 | (0x10 << 2));  // RSCEN=1, MAXDESC=  (0x1) * SRRCTL.BSIZEPACKET < 64KB
   WritePsrtype(i, 0x1 << 4); // 4.6.7.2.2 - PSR_type4 in PSRTYPE[n] should be set
 #endif
 
@@ -2279,7 +2279,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
 
 // Packet receive interrupt handler
 void ebbrt::IxgbeDriverRep::ReceivePoll() {
-  uint32_t  plen, i; //, i, ntc;
+  uint32_t  plen, i;
   uint64_t rxflag;
   rdesc_adv_wb_t* rx_desc;  
   uint32_t mcore = static_cast<uint32_t>(Cpu::GetMine());
@@ -2339,7 +2339,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
     // handle a single receive
     if(rx_desc->eop)
     {
-      ixgmq_.rx_desc_counts[1] ++;
+      //ixgmq_.rx_desc_counts[1] ++;
       
       //if (cleaned_count >= IXGBE_RX_BUFFER_WRITE)    
       plen = rx_desc->pkt_len;    
@@ -2379,7 +2379,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
     }
     else
     {
-      uint32_t rsc_count = 0;
+      //uint32_t rsc_count = 0;
       
       //RSC FIRST PACKET
       plen = rx_desc->pkt_len;    
@@ -2396,7 +2396,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
       ixgmq_.cleaned_count ++;
       i ++;
       ixgmq_.rx_head_ = (ixgmq_.rx_head_ + 1) % ixgmq_.rx_size_;
-      rsc_count ++;
+      //rsc_count ++;
       
       while(true) {
 	rx_desc = reinterpret_cast<rdesc_adv_wb_t*>(&(ixgmq_.rx_ring_[ixgmq_.rx_head_]));
@@ -2434,7 +2434,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
 	
 	ixgmq_.rx_head_ = (ixgmq_.rx_head_ + 1) % ixgmq_.rx_size_;
 
-	rsc_count ++;
+	//rsc_count ++;
 	if(rx_desc->eop) {
 	  rxflag = 0;
 	  // TCP/UDP checksum
@@ -2452,7 +2452,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
 	    }
 	  }
 
-	  ixgmq_.rx_desc_counts[rsc_count] ++;
+	  //ixgmq_.rx_desc_counts[rsc_count] ++;
 	  //if(b->ComputeChainDataLength() > 256) {
 	  //  auto p1 = reinterpret_cast<uint8_t*>(b->MutData());
 	  //  for (int i = 0; i < 248; i+=8) {
@@ -2468,7 +2468,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
     }
     
   }
-  }
+}
 
 /*void ebbrt::IxgbeDriverRep::ReceivePoll() {
   uint32_t len;
