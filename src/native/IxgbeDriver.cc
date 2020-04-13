@@ -87,34 +87,46 @@ void ebbrt::IxgbeDriver::Config(std::string s, uint32_t v) {
       ixgmq[i]->rx_desc_counts[j] = 0;
       ixgmq[i]->tx_desc_counts[j] = 0;
     }
+
+    ixgmq[i]->time_us = 0;
+    ixgmq[i]->totalNrg = 0;
+    if(i == 0 || i == 1) {
+      auto d = ebbrt::clock::Wall::Now().time_since_epoch();
+      ixgmq[i]->time_us = std::chrono::duration_cast<std::chrono::microseconds>(d).count();
+      ixgmq[i]->powerMeter.Start();
+    }
+    
+    //ebb_->StartTimer();
     
     //ebbrt::kprintf_force("%d: %d %d\n", i, ixgmq[i]->tx_desc_counts.size(), ixgmq[i]->rx_desc_counts.size());
     /*ixgmq[i]->stat_num_recv = 0;
-    ixgmq[i]->time_us = 0;
+    
     ixgmq[i]->totalCycles = 0;
     ixgmq[i]->totalIns = 0;
     ixgmq[i]->totalLLCmisses = 0;
-    ixgmq[i]->totalNrg = 0;
+    
     ixgmq[i]->fireCount = 0;
       
     ixgmq[i]->perfCycles.Start();
     ixgmq[i]->perfInst.Start();
     ixgmq[i]->perfLLC_miss.Start();    
     
-    if(i == 0 || i == 1) {
-      auto d = ebbrt::clock::Wall::Now().time_since_epoch();
-      ixgmq[i]->time_us = std::chrono::duration_cast<std::chrono::microseconds>(d).count();
-      ixgmq[i]->powerMeter.Start();
-    }
-    ebb_->StartTimer();*/
+    */
     
   } else if(s == "stop_perf") {
-    ixgmq[i]->perfCycles.Stop();
-    ixgmq[i]->perfInst.Stop();
-    ixgmq[i]->perfLLC_miss.Stop();
     if(i == 0 || i == 1) {
       ixgmq[i]->powerMeter.Stop();
+      ixgmq[i]->totalNrg += ixgmq[i]->powerMeter.Read();
+      auto d = ebbrt::clock::Wall::Now().time_since_epoch();
+      auto endt = std::chrono::duration_cast<std::chrono::microseconds>(d).count();
+      ixgmq[i]->totalTime = ((double)(endt - (ixgmq[i]->time_us)) / 1000000.0);
+      ixgmq[i]->totalPower = ixgmq[i]->totalNrg / ixgmq[i]->totalTime;
     }
+    
+    /*ixgmq[i]->perfCycles.Stop();
+    ixgmq[i]->perfInst.Stop();
+    ixgmq[i]->perfLLC_miss.Stop();
+    
     // accumulate counters
     ixgmq[i]->totalCycles += static_cast<uint64_t>(ixgmq[i]->perfCycles.Read());
     ixgmq[i]->totalIns += static_cast<uint64_t>(ixgmq[i]->perfInst.Read());
@@ -134,12 +146,18 @@ void ebbrt::IxgbeDriver::Config(std::string s, uint32_t v) {
     ixgmq[i]->perfLLC_miss.Clear();
     ixgmq[i]->stat_num_recv = 0;
     
-    ebb_->StopTimer();    
-    
+    ebb_->StopTimer();    */    
   } else if(s == "print") {
-    /*uint64_t cycs, ins, llc, nints;
     double ttime, tnrg;
-    ttime = tnrg = 0.0;
+    ttime = tnrg = 0.0;    
+    ttime = ixgmq[0]->totalTime > ixgmq[1]->totalTime ? ixgmq[0]->totalTime : ixgmq[1]->totalTime;
+    for(uint32_t i = 0; i < static_cast<uint32_t>(Cpu::Count()); i++) {
+      tnrg += ixgmq[i]->totalNrg;
+    }	
+    ebbrt::kprintf_force("TIME=%.2fs\n", ttime);
+    ebbrt::kprintf_force("WATTS=%.2f\n", tnrg/ttime);
+    
+    /*uint64_t cycs, ins, llc, nints;         
     cycs = ins = llc = nints = 0;
 
     for(uint32_t i = 0; i < static_cast<uint32_t>(Cpu::Count()); i++) {
@@ -149,8 +167,7 @@ void ebbrt::IxgbeDriver::Config(std::string s, uint32_t v) {
       tnrg += ixgmq[i]->totalNrg;
       nints += ixgmq[i]->totalInterrupts;
     }
-    ttime = ixgmq[0]->totalTime > ixgmq[1]->totalTime ? ixgmq[0]->totalTime : ixgmq[1]->totalTime;
-
+    
     ixgmq[i]->str_stats.str("");
     ixgmq[i]->str_stats.precision(20);
     ixgmq[i]->str_stats << "INSTRUCTIONS=" << ins
@@ -168,11 +185,10 @@ void ebbrt::IxgbeDriver::Config(std::string s, uint32_t v) {
     ebbrt::kprintf_force("CYCLES=%llu\n", cycs);
     ebbrt::kprintf_force("IPC=%.2f\n", (float)ins/cycs);
     ebbrt::kprintf_force("LLC_MISSES=%llu\n", llc);
-    ebbrt::kprintf_force("TIME=%.2f\n", ttime);    
-    ebbrt::kprintf_force("WATTS=%.2f\n", tnrg/ttime);
+    
     ebbrt::kprintf_force("AVG_ITR_PER_CORE=%.2f\n", (float)nints/static_cast<uint32_t>(Cpu::Count()));
     ebbrt::kprintf_force("\n");*/
-
+    ebbrt::kprintf_force("\n%15s %15s %15s\n", "num_desc","tx","rx");
     for(int j=0;j<40;j++) {
       uint32_t sumt = 0;
       uint32_t sumr = 0;
@@ -180,7 +196,7 @@ void ebbrt::IxgbeDriver::Config(std::string s, uint32_t v) {
 	sumt += ixgmq[c]->tx_desc_counts[j];
 	sumr += ixgmq[c]->rx_desc_counts[j];
       }      
-      ebbrt::kprintf_force("%d,%d,%d\n", j, sumt, sumr);
+      ebbrt::kprintf_force("%15d %15d %15d\n", j, sumt, sumr);
     }
     //ebbrt::kprintf_force("nrg=%.2lf J\n", tnrg);
     //ebbrt::kprintf_force("ttime=%.2f s time1=%.2f s time2=%.2f s\n", ttime, ixgmq[0]->totalTime, ixgmq[1]->totalTime);
@@ -227,6 +243,7 @@ void ebbrt::IxgbeDriverRep::ReclaimTx() {
   
   // (IxgbeDriver::NTXDESCS - 1): 340 W, 1599820.2, eax=0x60
   if(free_desc < (IxgbeDriver::NTXDESCS - 1)) {
+  //if(free_desc < (IxgbeDriver::NTXDESCS - 1)) {
     auto head = ixgmq_.tx_head_;
     auto tail = ixgmq_.tx_tail_;
 
@@ -600,7 +617,7 @@ void ebbrt::IxgbeDriverRep::SendTCPChained(std::unique_ptr<IOBuf> buf, uint64_t 
     i = 0;
     for (auto& buf_it : *buf) {
       if (buf_it.Length() > IXGBE_MAX_DATA_PER_TXD) {
-	ebbrt::kprintf("TSE buf_it.Length() = %u > IXGBE_MAX_DATA_PER_TXD\n", buf_it.Length());
+	ebbrt::kprintf("TSE buf_it.Length() = %u > IXGBE_MAX_DATA_PER_TXD num_chains=%llu i=%llu\n", buf_it.Length(), num_chains, i);
 	return;
       }      
       
@@ -660,16 +677,16 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
   num_chains = buf->CountChainElements();
 
   ReclaimTx();
-  
+
+#ifdef RSC_EN  
   // if no IP/TCP checksum - likely UDP packet
   if (!(pinfo.flags & PacketInfo::kNeedsCsum) && !(pinfo.flags & PacketInfo::kNeedsIpCsum)) {
     SendUdp(std::move(buf), len, pinfo);
   } else { // TCP Packet
-
     // hardware limits sending over 40 descriptors per packet, have to manually coalesce here
     // hopefully not too often
     if(num_chains > 38) {
-      //ixgmq_.tx_desc_counts[39] ++;
+      ixgmq_.tx_desc_counts[39] ++;
       //ebbrt::kprintf_force("*** num_chains=%d > 38\n", num_chains);
       b = MakeUniqueIOBuf(len);
       auto mdata = b->MutData();
@@ -680,14 +697,35 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
       //data = reinterpret_cast<uint64_t>(b->MutData());
       SendTCPUnchained(std::move(b), len, pinfo);
       
-    } else if(buf->IsChained() && num_chains <= 38) {
-      //ixgmq_.tx_desc_counts[num_chains] ++;
+    } else if(num_chains > 1 && num_chains <= 38) {
+      ixgmq_.tx_desc_counts[num_chains] ++;
       SendTCPChained(std::move(buf), len, num_chains, pinfo);
     } else { //Not Chained
-      //ixgmq_.tx_desc_counts[1] ++;
+      ixgmq_.tx_desc_counts[1] ++;
       SendTCPUnchained(std::move(buf), len, pinfo);
     }
-  } 
+  }
+#else
+  // if no IP/TCP checksum - likely UDP packet
+  if (!(pinfo.flags & PacketInfo::kNeedsCsum) && !(pinfo.flags & PacketInfo::kNeedsIpCsum)) {
+    SendUdp(std::move(buf), len, pinfo);
+  } else { // TCP Packet
+    ixgmq_.tx_desc_counts[1] ++;
+    
+    if(num_chains > 1) {
+      b = MakeUniqueIOBuf(len);
+      auto mdata = b->MutData();
+      for (auto& buf_it : *buf) {
+	memcpy(mdata, buf_it.Data(), buf_it.Length());
+	mdata += buf_it.Length();
+      }
+      SendTCPUnchained(std::move(b), len, pinfo);
+    } else {
+      SendTCPUnchained(std::move(buf), len, pinfo);
+    }
+  }
+#endif
+
   //ebbrt::kprintf("\t Send() core=%u head=%u tail=%u free_desc=%u\n", mcore, ixgmq_.tx_head_, ixgmq_.tx_tail_, free_desc);
   asm volatile("sfence" ::: "memory");
   //ebbrt::kprintf("\t Send() core=%u head=%u last_tail=%u tail=%u free_desc=%u\n", mcore, ixgmq_.tx_head_, ixgmq_.tx_last_tail_, ixgmq_.tx_tail_, free_desc);
@@ -1805,7 +1843,7 @@ void ebbrt::IxgbeDriver::Init() {
   
   /* setup msix */
   // switch to msix mode
-  //WriteGpie(0x1 << 4);  // Multiple_MSIX  
+  WriteGpie(0x1 << 4 | 0x1 << 5 | 0x1 << 31 | 0x1 << 30);  // Multiple_MSIX  
   //WriteGpie(0x1 << 5);  // OCD
   //WriteGpie(0x1 << 31);  // PBA_support
   // Enable auto masking of interrupt
@@ -1814,10 +1852,10 @@ void ebbrt::IxgbeDriver::Init() {
   // TODO: Set up management interrupt handler
 
   //WriteGpie(0xC0000036);
-  uint32_t gpie = 0xC0000036 | (0x7 << 11);
+  //uint32_t gpie = 0xC0000036 | (0x7 << 11);
   //uint32_t gpie = 0xC0000036 | (IxgbeDriver::RSC_DELAY << 11);
-  WriteGpie(gpie);
-  ebbrt::kprintf_force("RSC enabled, RSC_DELAY = %d us\n", (((gpie >> 11) & 0x7)+1)*4);
+  //WriteGpie(gpie);
+  //ebbrt::kprintf_force("RSC enabled, RSC_DELAY = %d us\n", (((gpie >> 11) & 0x7)+1)*4);
   
 //#ifdef RSC_EN
   // TODO: RSC delay value, just a guess at (1 + 1) * 4us = 8 us
@@ -2086,10 +2124,10 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   WriteRdlen_1(i, ixgmq[i]->rx_size_bytes_);
 
   // program srrctl register
-  //WriteSrrctl_1(i, 0x2000403); // 3KB
+  WriteSrrctl_1(i, 0x2000402); // 3KB
   //WriteSrrctl_1(i, 0x2000410); // 16KB
   //WriteSrrctl_1(i, (0x1 << 25) | (0x4 << 8) | (IxgbeDriver::RXBUFSZ / 1024));  // desctype adv 001b, BSIZEHEADER = 0x7 * 64B, BSIZEPACKET= 0x4 * 1 KB
-  WriteSrrctl_1(i, (0x1 << 25) | (0x4 << 8) | (3072 / 1024));
+  //WriteSrrctl_1(i, (0x1 << 25) | (0x4 << 8) | (3072 / 1024));
   
   /*WriteSrrctlZero(i);
   WriteSrrctl_1(i, RXBUFSZ / 1024);  // bsizepacket
@@ -2120,7 +2158,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
        received MSS
   *****/
   
-  WriteRscctl(i, 0x1 | (0x10 << 2));  // RSCEN=1, MAXDESC=  (0x1) * SRRCTL.BSIZEPACKET < 64KB
+  WriteRscctl(i, 0x1 | (0x11 << 2));  // RSCEN=1, MAXDESC=  (0x1) * SRRCTL.BSIZEPACKET < 64KB
   WritePsrtype(i, 0x1 << 4); // 4.6.7.2.2 - PSR_type4 in PSRTYPE[n] should be set
 #endif
 
@@ -2160,9 +2198,9 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   }
 
   // must be greater than rsc delay  
-  //WriteEitr(i, (IxgbeDriver::ITR_INTERVAL << 3) | IXGBE_EITR_CNT_WDIS);
+  WriteEitr(i, (IxgbeDriver::ITR_INTERVAL << 3) | IXGBE_EITR_CNT_WDIS);
   // WriteEitr(i, 0x80 << 3); // 7 * 2us = 14 us
-  WriteEitr(i, (32 << 3) | IXGBE_EITR_CNT_WDIS);
+  //WriteEitr(i, (32 << 3) | IXGBE_EITR_CNT_WDIS);
 
   // 7.3.1.4 - Note that there are no EIAC(1)...EIAC(2) registers.
   // The hardware setting for interrupts 16...63 is always auto clear.
@@ -2284,7 +2322,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   rdesc_adv_wb_t* rx_desc;  
   uint32_t mcore = static_cast<uint32_t>(Cpu::GetMine());
   
-  i = 0;  
+  i = 0;
   while(i < 64) {
     rxflag = 0x0;
     rx_desc = reinterpret_cast<rdesc_adv_wb_t*>(&(ixgmq_.rx_ring_[ixgmq_.rx_head_]));
@@ -2339,7 +2377,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
     // handle a single receive
     if(rx_desc->eop)
     {
-      //ixgmq_.rx_desc_counts[1] ++;
+      ixgmq_.rx_desc_counts[1] ++;
       
       //if (cleaned_count >= IXGBE_RX_BUFFER_WRITE)    
       plen = rx_desc->pkt_len;    
@@ -2379,7 +2417,12 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
     }
     else
     {
-      //uint32_t rsc_count = 0;
+#ifndef RSC_EN
+      ebbrt::kprintf_force("RSC packet in non-RSC mode\n");
+      return;
+#endif
+      
+      uint32_t rsc_count = 0;
       
       //RSC FIRST PACKET
       plen = rx_desc->pkt_len;    
@@ -2396,7 +2439,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
       ixgmq_.cleaned_count ++;
       i ++;
       ixgmq_.rx_head_ = (ixgmq_.rx_head_ + 1) % ixgmq_.rx_size_;
-      //rsc_count ++;
+      rsc_count ++;
       
       while(true) {
 	rx_desc = reinterpret_cast<rdesc_adv_wb_t*>(&(ixgmq_.rx_ring_[ixgmq_.rx_head_]));
@@ -2434,7 +2477,7 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
 	
 	ixgmq_.rx_head_ = (ixgmq_.rx_head_ + 1) % ixgmq_.rx_size_;
 
-	//rsc_count ++;
+	rsc_count ++;
 	if(rx_desc->eop) {
 	  rxflag = 0;
 	  // TCP/UDP checksum
@@ -2451,8 +2494,8 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
 	      rxflag |= RXFLAG_IPCS_VALID;
 	    }
 	  }
-
-	  //ixgmq_.rx_desc_counts[rsc_count] ++;
+	  
+	  ixgmq_.rx_desc_counts[rsc_count] ++;
 	  //if(b->ComputeChainDataLength() > 256) {
 	  //  auto p1 = reinterpret_cast<uint8_t*>(b->MutData());
 	  //  for (int i = 0; i < 248; i+=8) {

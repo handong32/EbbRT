@@ -22,7 +22,7 @@
 #include "Rapl.h"
 
 // Receive Side Scaling (RSC) enabled
-#define RSC_EN
+//#define RSC_EN
 // Direct Cache Access (DCA) enabled
 //#define DCA_ENABLE
 // Transmit Header Writeback enabled
@@ -113,26 +113,29 @@ class IxgbeDriver : public EthernetDevice {
 #else
   static const constexpr uint32_t NTXDESCS = 512;
   static const constexpr uint32_t NRXDESCS = 512;
+  //static const constexpr uint32_t NTXDESCS = 4096;
+  //static const constexpr uint32_t NRXDESCS = 4096;
 #endif
 
   // Linux Defaults
-  //static const constexpr uint32_t RXBUFSZ = 2048;
+  static const constexpr uint32_t RXBUFSZ = 2048;
   //static const constexpr uint32_t RXBUFSZ = 8192;
   static const constexpr uint32_t BSIZEHEADER = 256;
 
-  static const constexpr uint32_t RXBUFSZ = 4092;
+  //static const constexpr uint32_t RXBUFSZ = 4096;
   //static const constexpr uint32_t RXBUFSZ = 8192;
   //static const constexpr uint32_t RXBUFSZ = 16384;
 
   // 8 bits (3 - 11) in          (ITR_INTERVAL * 2 us)
-  static const constexpr uint8_t ITR_INTERVAL = 32;
+  //static const constexpr uint8_t ITR_INTERVAL = 32;
+  static const constexpr uint8_t ITR_INTERVAL = 8;
   
   // 3 bits only (0 - 7) in      (RSC_DELAY + 1) * 4 us
   static const constexpr uint8_t RSC_DELAY = 7;
   
   // DMA Tx TCP Max Allow Size Requests — DTXMXSZRQ
-  static const constexpr uint16_t MAX_BYTES_NUM_REQ = 0x10;
-  //static const constexpr uint16_t MAX_BYTES_NUM_REQ = 0xFFF;
+  //static const constexpr uint16_t MAX_BYTES_NUM_REQ = 0x10;
+  static const constexpr uint16_t MAX_BYTES_NUM_REQ = 0xFFF;
 
   // Class with per core queue data structures
   class e10Kq {
