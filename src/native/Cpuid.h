@@ -20,6 +20,9 @@ struct Features {
   bool x2apic;
   bool kvm_pv_eoi;
   bool kvm_clocksource2;
+
+  //TODO support for clock read CONSTANT_TSC && NONSTOP_TSC
+  
 };
 
 extern Features features;

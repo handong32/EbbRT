@@ -92,6 +92,15 @@ namespace rapl {
     RaplCounter& operator=(const RaplCounter& other) = delete;
 
     ~RaplCounter();
+    void Clear() {
+      counter_offset = 0.0;
+    }
+
+    uint64_t ReadMsr() 
+    {
+      return ebbrt::msr::Read(kMsrIntelPkgEnergyStatus);
+    }
+    
     void Start() {
       uint64_t res = ebbrt::msr::Read(kMsrIntelPkgEnergyStatus);
       counter_offset = (double)res*rapl_cpu_energy_units;
@@ -151,6 +160,7 @@ namespace rapl {
     }
     
     double Read();
+    
   private:
     double rapl_power_units{0.0};
     double rapl_cpu_energy_units{0.0};

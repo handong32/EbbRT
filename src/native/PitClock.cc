@@ -15,10 +15,15 @@
 
 namespace {
 thread_local uint64_t boot_system_time;  // Boot time [ticks]
-double ns_per_tick;  // CPU speed [nanosec / tick]
+double ns_per_tick;  // CPU speed [nanosec / tick]  
 
 // Calculate CPU speed
 double CalibrateSystemTime() {
+  // disables turbo boost, thermal control circuit
+  ebbrt::msr::Write(0x1A0, 0x4000850081);
+  // same p state as Linux with powersave governor
+  ebbrt::msr::Write(0x199, 0x1D00);
+  
   // Set PIT to Channel 0, Access lobyte/hibyte Mode, Mode 2 (Rate Generator)
   //   Mode 1 (One Shot) is 0x34 (from Detect CPU Speed link) but seems like
   //   could
@@ -40,7 +45,9 @@ double CalibrateSystemTime() {
   uint64_t end_tsc = 0;
   uint64_t total_tsc = 0;
   uint64_t step = 10000000;
-  uint64_t freq = 1193182;
+  uint64_t freq = 1193182; // PIT oscillator - 1.193182 MHz 
+  // cycles/second
+  // 
 
   // Read tsc some number of times (cheap to look at tsc)
   do {
@@ -52,17 +59,34 @@ double CalibrateSystemTime() {
   lo = ebbrt::io::In8(0x40);
   hi = ebbrt::io::In8(0x40);
   end_tick = (hi << 8) + lo;
-
+  
   // Calculate elapsed ticks (in PIT and tsc)
   total_tick = (start_tick - end_tick);
   total_tsc = (end_tsc - start_tsc);
-
-  // Calculate speed
+  
+  // X = total_tsc / Time --> how many tsc cycles/sec
+  
+  // Time = total_ticks / freq
+  // X = total_tsc / (total_ticks / freq)
+  
+  // X = (total_tsc * freq) / total_ticks
+  
+  // Calculate speed - Timestamp_Counter_Cycles / Sec
   return ((static_cast<double>(total_tsc) * freq) / total_tick);
+
+  // ns per TSC
+  // ns_per_tick = 1000000000 /
+  //               ((static_cast<double>(total_tsc) * freq) / total_tick);
 }
 
 ebbrt::ExplicitlyConstructed<ebbrt::clock::PitClock> the_clock;
 }  // namespace
+
+namespace ebbrt {
+  void NsPerTick() {
+    ebbrt::kprintf_force("NS_PER_TICK=%.8lf\n", ns_per_tick);
+  }
+}
 
 // Per core initialize boot time (b/c thread local)
 void ebbrt::clock::PitClock::ApInit() { boot_system_time = ebbrt::rdtsc(); }
@@ -76,7 +100,7 @@ ebbrt::clock::PitClock* ebbrt::clock::PitClock::GetClock() {
 // Pit clock constructor
 ebbrt::clock::PitClock::PitClock() {
   boot_system_time = ebbrt::rdtsc();
-  ns_per_tick = static_cast<double>(1000000000) / CalibrateSystemTime();
+  ns_per_tick = static_cast<double>(1000000000) / CalibrateSystemTime();  
 }
 
 // Determine current time since boot up

@@ -23,7 +23,7 @@ ebbrt::Future<void> ebbrt::NetworkManager::UdpPcb::Close() {
 
 // destroy entry
 void ebbrt::NetworkManager::UdpPcb::UdpEntryDeleter::operator()(UdpEntry* e) {
-  kassert(e->port == 0);
+  //kassert(e->port == 0);
   delete e;
 }
 
@@ -80,7 +80,7 @@ void ebbrt::NetworkManager::Interface::ReceiveUdp(Ipv4Header& ip_header,
 // if (udp_header.checksum &&
 //     IpPseudoCsum(*buf, ip_header.proto, ip_header.src, ip_header.dst))
 //   return;
-#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
+/*#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
   if (unlikely((rxflag & RXFLAG_L4CS) == 0)) {
     ebbrt::kprintf("%s RXFLAG_L4CS failed\n");
     return;
@@ -89,7 +89,7 @@ void ebbrt::NetworkManager::Interface::ReceiveUdp(Ipv4Header& ip_header,
     ebbrt::kprintf("%s RXFLAG_L4CS_VALID failed\n");
     return;
   }
-#endif
+  #endif*/
 
   auto entry = network_manager->udp_pcbs_.find(ntohs(udp_header.dst_port));
 

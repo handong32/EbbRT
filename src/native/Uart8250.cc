@@ -11,7 +11,10 @@
 #include "Io.h"
 
 namespace {
-const constexpr uint16_t kPort = 0x3f8;
+const constexpr uint16_t kPort1 = 0x3f8;
+const constexpr uint16_t kPort2 = 0x2f8;
+#define kPort kPort2
+  
 // when DLAB = 0
 const constexpr uint16_t kDataReg = 0;
 const constexpr uint16_t kIntEnable = 1;
@@ -46,11 +49,16 @@ void ebbrt::console::Init() noexcept {
 }
 
 namespace {
+  volatile size_t counter_to_throttle;
+  
 void WriteLocked(char c) {
-  while (!(ebbrt::io::In8(kPort + kLineStatusReg) & kLineStatusRegThrEmpty)) {
+  while (!(ebbrt::io::In8(kPort + kLineStatusReg) & kLineStatusRegThrEmpty)) {    
   }
 
   ebbrt::io::Out8(kPort + kDataReg, c);
+  for(counter_to_throttle=0;counter_to_throttle<1000;counter_to_throttle++) {
+    asm volatile("nop");
+  }
 }
 }
 

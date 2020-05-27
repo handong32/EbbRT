@@ -26,6 +26,7 @@ class VirtioNetDriver : public VirtioDriver<VirtioNetDriver>,
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) override;
   void Config(std::string s, uint32_t v) override;
   std::string ReadNic() override;
+  void* ReadItr() override;
   const EthernetAddress& GetMacAddress() override;
 
  private:

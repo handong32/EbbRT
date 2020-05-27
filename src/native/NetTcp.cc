@@ -215,7 +215,7 @@ void ebbrt::NetworkManager::Interface::ReceiveTcp(const Ipv4Header& ih,
 // if (unlikely(IpPseudoCsum(*buf, ih.proto, ih.src, ih.dst)))
 //   return;
 
-#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
+/*#ifdef __EBBRT_ENABLE_BAREMETAL_NIC__
   if (unlikely((rxflag & RXFLAG_L4CS) == 0)) {
     ebbrt::kprintf("%s RXFLAG_L4CS failed\n");
     return;
@@ -225,7 +225,8 @@ void ebbrt::NetworkManager::Interface::ReceiveTcp(const Ipv4Header& ih,
     ebbrt::kprintf("%s RXFLAG_L4CS_VALID failed\n");
     return;
   }
-#endif
+#endif*/
+  
   auto hdr_len = tcp_header.HdrLen();
   if (unlikely(hdr_len < sizeof(TcpHeader) || hdr_len > packet_len))
     return;
@@ -1149,7 +1150,9 @@ void ebbrt::NetworkManager::TcpEntry::SendSegment(TcpSegment& segment) {
   
   // XXX: Actually store the MSS instead of making this assumption
   //size_t mss = 1460;
+  //
   size_t mss = 2048;
+  
   if (segment.tcp_len > mss) {
     pinfo.gso_type = PacketInfo::kGsoTcpv4;
     pinfo.hdr_len = segment.th.HdrLen();

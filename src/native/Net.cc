@@ -63,10 +63,18 @@ std::string ebbrt::NetworkManager::ReadNic() {
   return interface_->ReadNic();
 }
 
+void* ebbrt::NetworkManager::ReadItr() {
+  return interface_->ReadItr();
+}
+
 void ebbrt::NetworkManager::Interface::Config(std::string s, uint32_t v) {
   ether_dev_.Config(std::move(s), v);
 }
 
 std::string ebbrt::NetworkManager::Interface::ReadNic() {
   return ether_dev_.ReadNic();
+}
+
+void* ebbrt::NetworkManager::Interface::ReadItr() {
+  return ether_dev_.ReadItr();
 }

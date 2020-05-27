@@ -169,6 +169,7 @@ ebbrt::Main(multiboot::Information* mbi) {
 // Currently not supported in BMNIC since we don't pass arguments
 // via grub
 #ifndef __EBBRT_ENABLE_BAREMETAL_NIC__
+	  ebbrt::kprintf_force("*** ENABLE NETWORKING\n");
           Messenger::Init();
           runtime::Init();
 #endif

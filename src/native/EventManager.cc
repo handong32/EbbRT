@@ -167,13 +167,13 @@ process:
   ecx = 1;
   
   //eax = 0x20;
-  //eax = 0x60;
+  eax = 0x60;
   
   // C1E state
   //eax = 0x1;
 
   // C7 state
-  eax = 0x30;
+  //eax = 0x30;
   
   asm volatile("sti; .byte 0x0f, 0x01, 0xc9;"
 	       :: "a" (eax), "c" (ecx));

@@ -1,4 +1,4 @@
-//          Copyright Boston University SESA Group 2013 - 2017.
+ //          Copyright Boston University SESA Group 2013 - 2017.
 // Distributed under the Boost Software License, Version 1.0.
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
@@ -20,22 +20,78 @@
 #include "SlabAllocator.h"
 #include "Perf.h"
 #include "Rapl.h"
+#include "Rdtsc.h"
 
 // Receive Side Scaling (RSC) enabled
-//#define RSC_EN
+#define RSC_EN
 // Direct Cache Access (DCA) enabled
-//#define DCA_ENABLE
+#define DCA_ENABLE
 // Transmit Header Writeback enabled
-//#define TX_HEAD_WB
+#define TX_HEAD_WB
 //#define JUMBO_EN
 
 // Collect Statistics Flag
-#define STATS_EN
+//#define STATS_EN
 //#define MAX_DESC
 
+union IxgbeLogEntry {
+  long long data[8];
+  struct {
+    long long tsc;    
+    long long ninstructions;
+    long long ncycles;
+    long long nllc_miss;
+    long long joules;
+    
+    int rx_desc;
+    int rx_bytes;
+    int tx_desc;
+    int tx_bytes;
+    
+    long long unused2;
+  } __attribute((packed)) Fields;
+} __attribute((packed));
+
+#define IXGBE_CACHE_LINE_SIZE 64
+#define IXGBE_LOG_SIZE 800000
+#define TSC_KHZ 2899999
+
+struct IxgbeLog {
+  union IxgbeLogEntry log[IXGBE_LOG_SIZE];
+  //char padding[IXGBE_CACHE_LINE_SIZE- sizeof(union LogEntry *)];
+  
+  uint64_t ins_prev;
+  uint64_t cyc_prev;
+  uint64_t llcmiss_prev;
+  uint64_t itr_joules_last_tsc;
+  
+  uint32_t msix_other_cnt;
+  uint32_t itr_cookie;
+  uint32_t non_itr_cnt;
+  int itr_cnt;
+  uint32_t perf_started;
+    
+  //union LogEntry *cur;  
+} __attribute__((packed, aligned(IXGBE_CACHE_LINE_SIZE)));
+
+extern struct IxgbeLog ixgbe_logs[16];
 
 namespace ebbrt {
   
+struct ITR_STATS {
+  uint64_t joules;
+  std::chrono::nanoseconds itr_time_ns;
+  
+  uint32_t rx_desc;
+  uint64_t rx_bytes;
+  uint32_t tx_desc;
+  uint64_t tx_bytes;
+  
+  uint64_t ninstructions;
+  uint64_t ncycles;
+  uint64_t nllc_miss;
+};
+
 // Per-core receive and transmit queue
 typedef struct {
   rdesc_legacy_t* rx_ring;
@@ -54,7 +110,10 @@ typedef struct {
   std::vector<std::unique_ptr<MutIOBuf>> circ_buffer;
 } e10k_queue_t;
 
+class IxgbeDriver;
 class IxgbeDriverRep;
+
+extern IxgbeDriver* ixgbe_dev;
 
 class IxgbeDriver : public EthernetDevice {
  public:
@@ -89,53 +148,8 @@ class IxgbeDriver : public EthernetDevice {
   
   void Config(std::string s, uint32_t v) override;
   std::string ReadNic() override;
+  void* ReadItr() override;
   const EthernetAddress& GetMacAddress() override;
-
- protected:
-  
-  static const constexpr uint16_t kIxgbeVendorId = 0x8086;
-  static const constexpr uint16_t kIxgbeDeviceId = 0x10FB;
-
-  /* FreeBSD:
-   * RxDescriptors Valid Range: 64-4096 Default Value: 256 This value is the
-   * number of receive descriptors allocated for each RX queue. Increasing this
-   * value allows the driver to buffer more incoming packets. Each descriptor
-   * is 16 bytes.  A receive buffer is also allocated for each descriptor.
-   *
-   * Note: with 8 rings and a dual port card, it is possible to bump up
-   *	against the system mbuf pool limit, you can tune nmbclusters
-   *	to adjust for this.
-   */
-
-#ifdef MAX_DESC
-  static const constexpr uint32_t NTXDESCS = 8192;
-  static const constexpr uint32_t NRXDESCS = 8192;
-#else
-  static const constexpr uint32_t NTXDESCS = 512;
-  static const constexpr uint32_t NRXDESCS = 512;
-  //static const constexpr uint32_t NTXDESCS = 4096;
-  //static const constexpr uint32_t NRXDESCS = 4096;
-#endif
-
-  // Linux Defaults
-  static const constexpr uint32_t RXBUFSZ = 2048;
-  //static const constexpr uint32_t RXBUFSZ = 8192;
-  static const constexpr uint32_t BSIZEHEADER = 256;
-
-  //static const constexpr uint32_t RXBUFSZ = 4096;
-  //static const constexpr uint32_t RXBUFSZ = 8192;
-  //static const constexpr uint32_t RXBUFSZ = 16384;
-
-  // 8 bits (3 - 11) in          (ITR_INTERVAL * 2 us)
-  //static const constexpr uint8_t ITR_INTERVAL = 32;
-  static const constexpr uint8_t ITR_INTERVAL = 8;
-  
-  // 3 bits only (0 - 7) in      (RSC_DELAY + 1) * 4 us
-  static const constexpr uint8_t RSC_DELAY = 7;
-  
-  // DMA Tx TCP Max Allow Size Requests — DTXMXSZRQ
-  //static const constexpr uint16_t MAX_BYTES_NUM_REQ = 0x10;
-  static const constexpr uint16_t MAX_BYTES_NUM_REQ = 0xFFF;
 
   // Class with per core queue data structures
   class e10Kq {
@@ -248,7 +262,7 @@ class IxgbeDriver : public EthernetDevice {
     uint64_t txaddr_;
     uint64_t txhwbaddr_;
     uint64_t rxflag_;
-    uint64_t cleaned_count{0};
+    uint32_t cleaned_count{0};    
       
     std::vector<std::unique_ptr<MutIOBuf>> circ_buffer_;
     std::vector<std::pair<uint32_t, uint32_t>> rsc_chain_;
@@ -272,10 +286,13 @@ class IxgbeDriver : public EthernetDevice {
 #endif
 
     // stats
-    uint64_t stat_num_recv{0};
-    uint64_t stat_num_send{0};
+    uint32_t stat_num_rx_desc{0};
+    uint32_t stat_num_tx_desc{0};
     uint64_t stat_num_rx_bytes{0};
     uint64_t stat_num_tx_bytes{0};
+    uint64_t total_tx_bytes{0};
+    uint64_t total_rx_bytes{0};
+    
     uint64_t time_us{0};
     uint64_t time_send{0};
     uint64_t time_idle_min{999999};
@@ -288,6 +305,13 @@ class IxgbeDriver : public EthernetDevice {
     uint64_t fireCount{0};
     uint32_t rapl_val{666};
     uint32_t itr_val{8};
+    uint32_t perf_started{0};
+    //uint64_t itr_joules_last_ts{0};
+    std::chrono::nanoseconds itr_joules_last_ts{0};
+    bool collect_stats{false};
+    
+    std::vector<ITR_STATS> itr_stats;
+    
     std::vector<uint32_t> tx_desc_counts;
     std::vector<uint32_t> rx_desc_counts;
     double totalNrg{0.0};
@@ -302,10 +326,59 @@ class IxgbeDriver : public EthernetDevice {
     ebbrt::perf::PerfCounter perfLLC_miss;
     ebbrt::perf::PerfCounter perfTLB_store_miss;
     ebbrt::perf::PerfCounter perfTLB_load_miss;
-    ebbrt::rapl::RaplCounter powerMeter;
-    
+    ebbrt::rapl::RaplCounter powerMeter;    
   };
+  
+  std::vector<std::unique_ptr<e10Kq>> ixgmq;
+  
+ protected:
+  
+  static const constexpr uint16_t kIxgbeVendorId = 0x8086;
+  static const constexpr uint16_t kIxgbeDeviceId = 0x10FB;
 
+  /* FreeBSD:
+   * RxDescriptors Valid Range: 64-4096 Default Value: 256 This value is the
+   * number of receive descriptors allocated for each RX queue. Increasing this
+   * value allows the driver to buffer more incoming packets. Each descriptor
+   * is 16 bytes.  A receive buffer is also allocated for each descriptor.
+   *
+   * Note: with 8 rings and a dual port card, it is possible to bump up
+   *	against the system mbuf pool limit, you can tune nmbclusters
+   *	to adjust for this.
+   */
+
+#ifdef MAX_DESC
+  static const constexpr uint32_t NTXDESCS = 8192;
+  static const constexpr uint32_t NRXDESCS = 8192;
+#else
+  //static const constexpr uint32_t NTXDESCS = 512;
+  //static const constexpr uint32_t NRXDESCS = 512;
+  static const constexpr uint32_t NTXDESCS = 1024;
+  static const constexpr uint32_t NRXDESCS = 1024;
+#endif
+
+  // Linux Defaults
+  //static const constexpr uint32_t RXBUFSZ = 2048;
+  //static const constexpr uint32_t RXBUFSZ = 8192;
+  static const constexpr uint32_t BSIZEHEADER = 256;
+
+  //static const constexpr uint32_t RXBUFSZ = 4096;
+  //static const constexpr uint32_t RXBUFSZ = 7168;
+  static const constexpr uint32_t RXBUFSZ = 8192;
+  //static const constexpr uint32_t RXBUFSZ = 16384;
+  //static const constexpr uint32_t RXBUFSZ = 15360;
+
+  // 8 bits (3 - 11) in          (ITR_INTERVAL * 2 us)
+  //static const constexpr uint8_t ITR_INTERVAL = 32;
+  static const constexpr uint8_t ITR_INTERVAL =4;
+  
+  // 3 bits only (0 - 7) in      (RSC_DELAY + 1) * 4 us
+  static const constexpr uint8_t RSC_DELAY = 0;
+  
+  // DMA Tx TCP Max Allow Size Requests — DTXMXSZRQ
+  //static const constexpr uint16_t MAX_BYTES_NUM_REQ = 0x10;
+  static const constexpr uint16_t MAX_BYTES_NUM_REQ = 0xFFF;
+  
  private:
   EbbRef<IxgbeDriverRep> ebb_;
   NetworkManager::Interface& itf_;
@@ -543,7 +616,7 @@ class IxgbeDriver : public EthernetDevice {
   e10k_queue_t* ixgq;
   uint8_t rcv_vector{0};
 
-  std::vector<std::unique_ptr<e10Kq>> ixgmq;
+  //std::vector<std::unique_ptr<e10Kq>> ixgmq;
 
   friend class IxgbeDriverRep;
 };  // class IxgbeDriver
@@ -556,9 +629,9 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver>, Timer::
   void ReclaimTx();
   void ReclaimRx();
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo);
-  void SendUdp(std::unique_ptr<IOBuf> buf, uint64_t len, PacketInfo pinfo);
-  void SendTCPChained(std::unique_ptr<IOBuf> buf, uint64_t len, uint64_t num_chains, PacketInfo pinfo);
-  void SendTCPUnchained(std::unique_ptr<IOBuf> buf, uint64_t len, PacketInfo pinfo);
+  uint32_t SendUdp(std::unique_ptr<IOBuf> buf, uint64_t len, PacketInfo pinfo);
+  uint32_t SendTCPChained(std::unique_ptr<IOBuf> buf, uint64_t len, uint64_t num_chains, PacketInfo pinfo);
+  uint32_t SendTCPUnchained(std::unique_ptr<IOBuf> buf, uint64_t len, PacketInfo pinfo);
   
   //void AddContext(uint8_t idx, uint8_t maclen, uint16_t iplen, uint8_t l4len,
   //               enum l4_type l4type);
