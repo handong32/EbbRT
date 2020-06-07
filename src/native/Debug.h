@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "Preprocessor.h"
+//#define NPCLIENT
 
 namespace ebbrt {
 __attribute__((no_instrument_function)) void

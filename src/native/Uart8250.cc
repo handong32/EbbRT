@@ -9,11 +9,17 @@
 #include "../ExplicitlyConstructed.h"
 #include "../SpinLock.h"
 #include "Io.h"
+#include "Debug.h"
 
 namespace {
 const constexpr uint16_t kPort1 = 0x3f8;
 const constexpr uint16_t kPort2 = 0x2f8;
+
+#ifdef NPCLIENT
+#define kPort kPort1
+#else
 #define kPort kPort2
+#endif
   
 // when DLAB = 0
 const constexpr uint16_t kDataReg = 0;

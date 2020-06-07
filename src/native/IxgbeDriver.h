@@ -370,7 +370,7 @@ class IxgbeDriver : public EthernetDevice {
 
   // 8 bits (3 - 11) in          (ITR_INTERVAL * 2 us)
   //static const constexpr uint8_t ITR_INTERVAL = 32;
-  static const constexpr uint8_t ITR_INTERVAL =4;
+  static const constexpr uint8_t ITR_INTERVAL = 6;
   
   // 3 bits only (0 - 7) in      (RSC_DELAY + 1) * 4 us
   static const constexpr uint8_t RSC_DELAY = 0;

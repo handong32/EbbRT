@@ -61,5 +61,8 @@ ebbrt::Cpu* ebbrt::Cpu::GetByApicId(size_t apic_id) {
   return &(*it);
 }
 
+#ifdef NPCLIENT
+size_t ebbrt::Cpu::Count() { return 1; }
+#else
 size_t ebbrt::Cpu::Count() { return cpus->size(); }
-//size_t ebbrt::Cpu::Count() { return 1; }
+#endif
