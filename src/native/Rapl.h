@@ -92,6 +92,16 @@ namespace rapl {
     RaplCounter& operator=(const RaplCounter& other) = delete;
 
     ~RaplCounter();
+
+    void Clear() {
+      counter_offset = 0.0;
+    }
+
+    uint64_t ReadMsr() 
+    {
+      return ebbrt::msr::Read(kMsrIntelPkgEnergyStatus);
+    }
+
     void Start() {
       uint64_t res = ebbrt::msr::Read(kMsrIntelPkgEnergyStatus);
       counter_offset = (double)res*rapl_cpu_energy_units;
@@ -108,7 +118,7 @@ namespace rapl {
       double after = (double)res*rapl_cpu_energy_units;
       //ebbrt::kprintf("Package Energy after: %.6fJ\n", after);
       counter_offset = after - counter_offset;
-	//ebbrt::kprintf("Total Package Energy used: %.6fJ\n", after - counter_offset);
+      ebbrt::kprintf_force("Total Package Energy used: %.6fJ\n", counter_offset);
     }
 
     void SetLimit(uint32_t v) {
@@ -134,7 +144,7 @@ namespace rapl {
       uint32_t high = (result >> 32) & 0xFFFFFFFF;
       asm volatile("wrmsr" : : "c"(kMsrPkgRaplPowerLimit), "a"(low), "d"(high));
       
-      result=ebbrt::msr::Read(kMsrPkgRaplPowerLimit);
+      /*result=ebbrt::msr::Read(kMsrPkgRaplPowerLimit);
       ebbrt::kprintf("%u Package power limits are %s\n", v, (result >> 63) ? "locked" : "unlocked");
       double pkg_power_limit_1 = rapl_power_units*(double)((result>>0)&0x7FFF);
       double pkg_time_window_1 = rapl_time_units*(double)((result>>17)&0x007F);
@@ -148,6 +158,7 @@ namespace rapl {
 	     pkg_power_limit_2, pkg_time_window_2,
 	     (result & (1LL<<47)) ? "enable power limit" : "disabled",
 	     (result & (1LL<<48)) ? "clamped" : "not_clamped");
+      */
     }
     
     double Read();

@@ -164,15 +164,15 @@ process:
 	       :: "a" ((void*)&flags), "c" (ecx), "d"(edx));
 
   // https://elixir.bootlin.com/linux/v4.15.1/source/arch/x86/include/asm/mwait.h#L100
-  ecx = 1;
-  
-  //eax = 0x20;
-  //eax = 0x60;
-  
-  // C1E state
-  //eax = 0x1;
+  // https://elixir.bootlin.com/linux/v5.5.1/source/drivers/idle/intel_idle.c
 
-  // C7 state
+  // sandy bridge
+  // C1 0x00
+  // C1E 0x01
+  // C3 0x10
+  // C6 0x20
+  // C7 0x30
+  ecx = 1; /* break on interrupt flag */
   eax = 0x30;
   
   asm volatile("sti; .byte 0x0f, 0x01, 0xc9;"

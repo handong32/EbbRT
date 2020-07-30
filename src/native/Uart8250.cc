@@ -11,7 +11,7 @@
 #include "Io.h"
 
 namespace {
-const constexpr uint16_t kPort = 0x3f8;
+const constexpr uint16_t kPort = 0x2f8;
 // when DLAB = 0
 const constexpr uint16_t kDataReg = 0;
 const constexpr uint16_t kIntEnable = 1;

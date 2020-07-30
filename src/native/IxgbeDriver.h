@@ -20,6 +20,7 @@
 #include "SlabAllocator.h"
 #include "Perf.h"
 #include "Rapl.h"
+#include "Trace.h"
 
 // Receive Side Scaling (RSC) enabled
 //#define RSC_EN
@@ -30,30 +31,54 @@
 //#define JUMBO_EN
 
 // Collect Statistics Flag
-#define STATS_EN
+//#define STATS_EN
 //#define MAX_DESC
 
+union IxgbeLogEntry {
+  long long data[12];
+  struct {
+    long long tsc;    
+    long long ninstructions;
+    long long ncycles;
+    long long nref_cycles;
+    long long nllc_miss;
+    long long joules;
+    long long c3;
+    long long c6;
+    long long c7;
+    
+    int rx_desc;
+    int rx_bytes;
+    int tx_desc;
+    int tx_bytes;
+    
+    long long pad;
+  } __attribute((packed)) Fields;
+} __attribute((packed));
+
+#define IXGBE_CACHE_LINE_SIZE 64
+#define IXGBE_LOG_SIZE 4000000U
+#define TSC_KHZ 2899999
+
+struct IxgbeLog {
+  uint64_t itr_joules_last_tsc;
+  uint64_t rdtsc_start;
+  uint64_t rdtsc_end;
+  uint32_t itr_cnt;
+  uint32_t itr_cnt2;  
+  uint32_t repeat;
+  uint32_t dvfs;
+  uint32_t rapl;
+  uint32_t itr;
+  uint32_t iter;    
+} __attribute__((packed, aligned(IXGBE_CACHE_LINE_SIZE)));
+
+extern struct IxgbeLog ixgbe_stats[16];
+extern union IxgbeLogEntry *ixgbe_logs[16];
+extern std::unique_ptr<ebbrt::MutUniqueIOBuf> bsendbufs[16];
 
 namespace ebbrt {
   
-// Per-core receive and transmit queue
-typedef struct {
-  rdesc_legacy_t* rx_ring;
-  uint32_t rx_head;
-  uint32_t rx_tail;
-  uint32_t rx_size;
-
-  tdesc_legacy_t* tx_ring;
-  uint32_t* tx_head;
-  uint32_t tx_tail;
-  uint32_t tx_last_tail;
-  uint32_t tx_size;
-  bool* tx_isctx;
-
-  // buffers holding packet data
-  std::vector<std::unique_ptr<MutIOBuf>> circ_buffer;
-} e10k_queue_t;
-
 class IxgbeDriverRep;
 
 class IxgbeDriver : public EthernetDevice {
@@ -150,13 +175,6 @@ class IxgbeDriver : public EthernetDevice {
         circ_buffer_.emplace_back(MakeUniqueIOBuf(RXBUFSZ, true));
       }
 
-      // rsc_chain_ is a map between receive descriptor number and
-      // packet len, need packet len to extract out
-      // packet data else code will read redundant
-      // zeros if packet len does not use full buffer
-      // TODO: should be optimized
-      rsc_chain_.reserve(NRXDESCS+1);
-
       // keep a log of number of idle times
       idle_times_.reserve(NRXDESCS);
 
@@ -165,11 +183,6 @@ class IxgbeDriver : public EthernetDevice {
       for (uint32_t k = 0; k < NRXDESCS; k++) {
         tx_iseop[k] = false;
       }
-      
-      // keeps a log of descriptors where eop == 1
-      // used to coalesce reclaiming of tx descriptors
-      // once the threshold of some limit is hit      
-      //send_to_watch.reserve(NRXDESCS);
 
       // RX ring buffer allocation
       auto sz = align::Up(sizeof(rdesc_legacy_t) * NRXDESCS, 4096);
@@ -190,16 +203,6 @@ class IxgbeDriver : public EthernetDevice {
       addr = reinterpret_cast<void*>(page.ToAddr());
       memset(addr, 0, sz);
       tx_ring_ = static_cast<tdesc_legacy_t*>(addr);
-
-      // TX adv context buffer allocation
-      /*sz = align::Up(sizeof(bool) * NTXDESCS, 4096);
-      order = Fls(sz - 1) - pmem::kPageShift + 1;
-      page = page_allocator->Alloc(order, nid);
-      kbugon(page == Pfn::None(), "ixgbe: page allocation failed in %s",
-             __FUNCTION__);
-      addr = reinterpret_cast<void*>(page.ToAddr());
-      memset(addr, 0, sz);
-      tx_isctx_ = static_cast<bool*>(addr);*/
 
 #ifdef TX_HEAD_WB
       // TODO: not sure how much exactly to allocate for head wb addr
@@ -251,9 +254,7 @@ class IxgbeDriver : public EthernetDevice {
     uint64_t cleaned_count{0};
       
     std::vector<std::unique_ptr<MutIOBuf>> circ_buffer_;
-    std::vector<std::pair<uint32_t, uint32_t>> rsc_chain_;
     std::unordered_map<uint32_t, uint32_t> idle_times_;
-    std::vector<std::pair<uint32_t, uint32_t>> send_to_watch;
     std::vector<bool> tx_iseop;
     std::ostringstream str_stats;
     //std::vector<uint32_t> send_to_watch;
@@ -272,10 +273,13 @@ class IxgbeDriver : public EthernetDevice {
 #endif
 
     // stats
-    uint64_t stat_num_recv{0};
-    uint64_t stat_num_send{0};
-    uint64_t stat_num_rx_bytes{0};
-    uint64_t stat_num_tx_bytes{0};
+    int stat_num_rx_desc{0};
+    int stat_num_tx_desc{0};
+    int stat_num_rx_bytes{0};
+    int stat_num_tx_bytes{0};
+    uint64_t total_tx_bytes{0};
+    uint64_t total_rx_bytes{0};
+    
     uint64_t time_us{0};
     uint64_t time_send{0};
     uint64_t time_idle_min{999999};
@@ -288,6 +292,9 @@ class IxgbeDriver : public EthernetDevice {
     uint64_t fireCount{0};
     uint32_t rapl_val{666};
     uint32_t itr_val{8};
+    std::chrono::nanoseconds itr_joules_last_ts{0};
+    bool collect_stats{false};
+    
     std::vector<uint32_t> tx_desc_counts;
     std::vector<uint32_t> rx_desc_counts;
     double totalNrg{0.0};
@@ -298,6 +305,7 @@ class IxgbeDriver : public EthernetDevice {
     bool stat_init{false};
     ebbrt::perf::PerfCounter perfCycles;
     ebbrt::perf::PerfCounter perfInst;
+    ebbrt::perf::PerfCounter perfRefCycles;    
     ebbrt::perf::PerfCounter perfLLC_ref;
     ebbrt::perf::PerfCounter perfLLC_miss;
     ebbrt::perf::PerfCounter perfTLB_store_miss;
@@ -527,7 +535,6 @@ class IxgbeDriver : public EthernetDevice {
 
   // dump per core stats if STATS_EN
   void DumpStats();
-  e10k_queue_t& GetQueue() const { return *ixgq; }
 
   e10Kq& GetMultiQueue(uint32_t index) const { return *ixgmq[index]; }
 
@@ -540,7 +547,6 @@ class IxgbeDriver : public EthernetDevice {
     volatile uint32_t kIxgbeStatus;
   };
 
-  e10k_queue_t* ixgq;
   uint8_t rcv_vector{0};
 
   std::vector<std::unique_ptr<e10Kq>> ixgmq;
@@ -558,7 +564,8 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver>, Timer::
   void Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo);
   void SendUdp(std::unique_ptr<IOBuf> buf, uint64_t len, PacketInfo pinfo);
   void SendTCPChained(std::unique_ptr<IOBuf> buf, uint64_t len, uint64_t num_chains, PacketInfo pinfo);
-  void SendTCPUnchained(std::unique_ptr<IOBuf> buf, uint64_t len, PacketInfo pinfo);
+  //void SendTCPUnchained(std::unique_ptr<IOBuf> buf, uint64_t len, PacketInfo pinfo);
+  void SendTCPUnchained(uint64_t bdata, uint64_t len, PacketInfo pinfo);
   
   //void AddContext(uint8_t idx, uint8_t maclen, uint16_t iplen, uint8_t l4len,
   //               enum l4_type l4type);
@@ -583,7 +590,6 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver>, Timer::
   void Fire() override;
   
   const IxgbeDriver& root_;
-  e10k_queue_t& ixgq_;
   IxgbeDriver::e10Kq& ixgmq_;
 
   EventManager::IdleCallback receive_callback_;

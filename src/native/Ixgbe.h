@@ -39,6 +39,7 @@
 // max transmit sizes
 #define IXGBE_MAX_TXD_PWR	14
 #define IXGBE_MAX_DATA_PER_TXD	(1u << IXGBE_MAX_TXD_PWR)
+#define IXGBE_TSO_LIMIT 262144
 
 enum l4_type { l4_type_udp = 0, l4_type_tcp, l4_type_sctp, l4_type_rsv };
 
