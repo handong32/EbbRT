@@ -23,6 +23,8 @@
 #include "Trans.h"
 #include "VMemAllocator.h"
 
+extern uint64_t nsleep_states;
+
 namespace ebbrt {
 
 class EventManager : Timer::Hook {

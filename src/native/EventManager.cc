@@ -173,7 +173,7 @@ process:
   // C6 0x20
   // C7 0x30
   ecx = 1; /* break on interrupt flag */
-  eax = 0x30;
+  eax = 0x30; /* we always pick the deepest sleep state */
   
   asm volatile("sti; .byte 0x0f, 0x01, 0xc9;"
 	       :: "a" (eax), "c" (ecx));

@@ -536,6 +536,11 @@ void ebbrt::IxgbeDriverRep::Send(std::unique_ptr<IOBuf> buf, PacketInfo pinfo) {
     return;
   }
   num_chains = buf->CountChainElements();
+
+  /*if(mcore == 15) {
+    ebbrt::kprintf_force("\t Sending on core 15??");
+    return;
+    }*/
   
 #ifndef TX_HEAD_WB
   ReclaimTx();
@@ -1615,7 +1620,7 @@ void ebbrt::IxgbeDriver::GlobalReset() {
  **/
 void ebbrt::IxgbeDriver::Init() {
   uint64_t d_mac;
-  uint32_t ncore = static_cast<uint32_t>(Cpu::Count());
+  
 
   ebbrt::kprintf("%s ", __PRETTY_FUNCTION__);
   bar0_.Map();  // allocate virtual memory
@@ -1811,6 +1816,46 @@ void ebbrt::IxgbeDriver::Init() {
 
   // Fill in RSS redirection table (128 entries), sets which core the lowest 7 bits of hashed output goes to
   // hacky atm
+  // memcached-silo -- avoid firing interrupts on core 15
+  /*uint32_t i = 0;
+  WriteReta(i+0, 0x03020100);
+  WriteReta(i+1, 0x07060504); 
+  WriteReta(i+2, 0x0B0A0908);
+  WriteReta(i+3, 0x000E0D0C);
+  WriteReta(i+4, 0x04030201);
+  WriteReta(i+5, 0x08070605); 
+  WriteReta(i+6, 0x0C0B0A09);
+  WriteReta(i+7, 0x01000E0D);
+  
+  WriteReta(i+8, 0x05040302);
+  WriteReta(i+9, 0x09080706); 
+  WriteReta(i+10, 0x0D0C0B0A);
+  WriteReta(i+11, 0x0201000E);
+  WriteReta(i+12, 0x06050403);
+  WriteReta(i+13, 0x0A090807); 
+  WriteReta(i+14, 0x0E0D0C0B);
+  WriteReta(i+15, 0x03020100);
+  
+  WriteReta(i+16, 0x07060504); 
+  WriteReta(i+17, 0x0B0A0908);
+  WriteReta(i+18, 0x000E0D0C);
+  WriteReta(i+19, 0x04030201);
+  WriteReta(i+20, 0x08070605); 
+  WriteReta(i+21, 0x0C0B0A09);
+  WriteReta(i+22, 0x01000E0D);
+  WriteReta(i+23, 0x05040302);
+  
+  WriteReta(i+24, 0x09080706); 
+  WriteReta(i+25, 0x0D0C0B0A);
+  WriteReta(i+26, 0x0201000E);
+  WriteReta(i+27, 0x06050403);
+  WriteReta(i+28, 0x0A090807); 
+  WriteReta(i+29, 0x0E0D0C0B);
+  WriteReta(i+30, 0x03020100);
+  WriteReta(i+31, 0x07060504);
+  */
+
+  uint32_t ncore = static_cast<uint32_t>(Cpu::Count());
   for (auto i = 0; i < 32; i += 4) {
     // all route to core 0
     if(ncore == 1) {
@@ -1819,7 +1864,7 @@ void ebbrt::IxgbeDriver::Init() {
       WriteReta(i+2, 0x0000000);
       WriteReta(i+3, 0x0000000);
     } else if(ncore == 2) {
-    WriteReta(i, 0x1010100);
+      WriteReta(i, 0x1010100);
       WriteReta(i+1, 0x1010100);
       WriteReta(i+2, 0x1010100);
       WriteReta(i+3, 0x1010100);
@@ -1839,15 +1884,19 @@ void ebbrt::IxgbeDriver::Init() {
       WriteReta(i+2, 0x3020100);
       WriteReta(i+3, 0x7060504);
     } else if(ncore == 16){
-      /*WriteReta(i, 0x03020100);
+      // memcached
+      /*WriteReta(i+0, 0x03020100);
       WriteReta(i+1, 0x07060504); 
       WriteReta(i+2, 0x0B0A0908);
-      WriteReta(i+3, 0x0F0E0D0C);*/
-      ebbrt::kprintf_force("+++ all interrupts firing on Core 1\n");
-      WriteReta(i, 0x1010101);
-      WriteReta(i+1, 0x1010101);
-      WriteReta(i+2, 0x1010101);
-      WriteReta(i+3, 0x1010101);
+      WriteReta(i+3, 0x0F0E0D0C);
+      */
+      
+      // nodejs -- all on core 1
+      ebbrt::kprintf_force("*** NodeJS firing all on core 1\n");
+      WriteReta(i+0, 0x01010101);
+      WriteReta(i+1, 0x01010101);
+      WriteReta(i+2, 0x01010101);
+      WriteReta(i+3, 0x01010101);
     } else {
       ebbrt::kabort("%s: Can only redirect interrupts to 16 cores\n", __FUNCTION__);
     }
@@ -2029,7 +2078,7 @@ void ebbrt::IxgbeDriver::SetupMultiQueue(uint32_t i) {
   // setup RX interrupts for queue i
   dev_.SetMsixEntry(i, rcv_vector, ebbrt::Cpu::GetByIndex(i)->apic_id());
   
-  //ebbrt::kprintf("Core %d: BSIZEPACKET=%d bytes NTXDESCS=%d NRXDESCS=%d ITR_INTERVAL=%dus RCV_VECTOR=%d APIC_ID=%d \n", i, RXBUFSZ, NTXDESCS, NRXDESCS, (int) (IxgbeDriver::ITR_INTERVAL * 2), (int)rcv_vector, (int)(ebbrt::Cpu::GetByIndex(i)->apic_id()));
+  ebbrt::kprintf_force("Core %d: BSIZEPACKET=%d bytes NTXDESCS=%d NRXDESCS=%d ITR_INTERVAL=%dus RCV_VECTOR=%d APIC_ID=%d \n", i, RXBUFSZ, NTXDESCS, NRXDESCS, (int) (IxgbeDriver::ITR_INTERVAL * 2), (int)rcv_vector, (int)(ebbrt::Cpu::GetByIndex(i)->apic_id()));
 
   // don't set up interrupts for tx since we have head writeback??
   auto qn = i / 2;  // put into correct IVAR
@@ -2174,8 +2223,38 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   uint64_t now = 0, last = 0;
   uint64_t cjoules, cins, ccyc, crefcyc, cllc;
   uint64_t c3, c6, c7;
+  //uint32_t eicr;
+  
+  c3 = c6 = c7 = 0;
+  
+  if(ixgmq_.start_perf == false) {    
+    uint32_t index, low, high;
+    uint64_t data;
+
+    data = 0x333;
+    index = 0x38D;
+    low = (uint32_t)(data & 0xFFFFFFFF);
+    high = (data >> 32) & 0xFFFFFFFF;
+    asm volatile("wrmsr" : : "c"(index), "a"(low), "d"(high));
+
+    data = 0x43412E;
+    index = 0x186;
+    low = (uint32_t)(data & 0xFFFFFFFF);
+    high = (data >> 32) & 0xFFFFFFFF;
+    asm volatile("wrmsr" : : "c"(index), "a"(low), "d"(high));
+
+    data = 0x700000001;
+    index = 0x38F;
+    low = (uint32_t)(data & 0xFFFFFFFF);
+    high = (data >> 32) & 0xFFFFFFFF;
+    asm volatile("wrmsr" : : "c"(index), "a"(low), "d"(high));
+
+    ixgmq_.start_perf = true;
+  }
   
   if(ixgmq_.collect_stats) {
+    ccyc = 0;
+    cllc = 0;
     icnt = ixgbe_stats[mcore].itr_cnt;
     ixgbe_stats[mcore].itr_cnt2 ++;
     
@@ -2183,7 +2262,12 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
       //get current tsc and store it
       now = ebbrt::trace::rdtsc();
       kassert(now != 0);
-      __builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.tsc), now);
+
+      //eicr = ReadEicr();
+      //ixgbe_logs[mcore][icnt].Fields.c3 = eicr;
+      
+      //__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.tsc), now);
+      ixgbe_logs[mcore][icnt].Fields.tsc = now;
       
       // get last tsc
       last = ixgbe_stats[mcore].itr_joules_last_tsc;
@@ -2191,25 +2275,42 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
       // ~ 1 ms has passed
       if ((now - last) > TSC_KHZ) { 	
 	cjoules = ixgmq_.powerMeter.ReadMsr();
-	cins = ixgmq_.perfInst.Read();
-	ccyc = ixgmq_.perfCycles.Read();
-	crefcyc = ixgmq_.perfRefCycles.Read();
-	cllc = ixgmq_.perfLLC_miss.Read();
-
-	c3 = ebbrt::msr::Read(0x3FC);
-	c6 = ebbrt::msr::Read(0x3FD);
-	c7 = ebbrt::msr::Read(0x3FE);
-	  
-	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.joules), cjoules);
+	if (ixgmq_.start_perf) {
+	  cins = ebbrt::msr::Read(0x309);
+	  ccyc = ebbrt::msr::Read(0x30A);
+	  crefcyc = ebbrt::msr::Read(0x30B);
+	  cllc = ebbrt::msr::Read(0xC1);
+	}
+	//cins = ixgmq_.perfInst.Read();
+	//ccyc = ixgmq_.perfCycles.Read();
+	//crefcyc = ixgmq_.perfRefCycles.Read();
+	//cllc = ixgmq_.perfLLC_miss.Read();
+	
+	//c3 = ebbrt::msr::Read(0x3FC);
+	//c6 = ebbrt::msr::Read(0x3FD);
+	//c7 = ebbrt::msr::Read(0x3FE);
+	
+	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.joules), cjoules);	
 	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.ninstructions), cins);
 	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.ncycles), ccyc);
 	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.nref_cycles), crefcyc);
 	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.nllc_miss), cllc);
 
+	/*ixgbe_logs[mcore][icnt].Fields.joules = cjoules;
+	ixgbe_logs[mcore][icnt].Fields.ninstructions = cins;
+	ixgbe_logs[mcore][icnt].Fields.ncycles = ccyc;
+	ixgbe_logs[mcore][icnt].Fields.nref_cycles = crefcyc;
+	ixgbe_logs[mcore][icnt].Fields.nllc_miss = cllc;*/
+	
 	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.c3), c3);
 	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.c6), c6);
 	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.c7), c7);
 
+	/*ixgbe_logs[mcore][icnt].Fields.c3 = c3;
+	ixgbe_logs[mcore][icnt].Fields.c6 = c6;
+	ixgbe_logs[mcore][icnt].Fields.c7 = c7;
+	*/
+	
         ixgbe_stats[mcore].itr_joules_last_tsc = now;
       }
 
@@ -2217,7 +2318,12 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
       __builtin_ia32_movnti(&(ixgbe_logs[mcore][icnt].Fields.rx_bytes), ixgmq_.stat_num_rx_bytes);
       __builtin_ia32_movnti(&(ixgbe_logs[mcore][icnt].Fields.tx_desc), ixgmq_.stat_num_tx_desc);
       __builtin_ia32_movnti(&(ixgbe_logs[mcore][icnt].Fields.tx_bytes), ixgmq_.stat_num_tx_bytes);
-      
+
+      /*ixgbe_logs[mcore][icnt].Fields.rx_desc = ixgmq_.stat_num_rx_desc;
+      ixgbe_logs[mcore][icnt].Fields.rx_bytes = ixgmq_.stat_num_rx_bytes;
+      ixgbe_logs[mcore][icnt].Fields.tx_desc = ixgmq_.stat_num_tx_desc;
+      ixgbe_logs[mcore][icnt].Fields.tx_bytes = ixgmq_.stat_num_tx_bytes;*/
+	
       ixgmq_.stat_num_rx_bytes = 0;
       ixgmq_.stat_num_rx_desc = 0;
       ixgmq_.stat_num_tx_bytes = 0;
@@ -2399,9 +2505,15 @@ ebbrt::IxgbeDriverRep::IxgbeDriverRep(const IxgbeDriver& root)
     : root_(root), ixgmq_(root.GetMultiQueue(Cpu::GetMine())),
       receive_callback_([this]() { ReceivePoll(); }) {
   //this->ReceivePoll();
-  ixgmq_.perfCycles = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::cycles);
-  ixgmq_.perfInst = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::instructions);
-  ixgmq_.perfLLC_miss = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::llc_misses);  
+  //ixgmq_.perfCycles = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::fixed_cycles);
+  //ixgmq_.perfInst = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::fixed_instructions);  
+
+  //ixgmq_.perfRefCycles = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::fixed_reference_cycles);  
+  //ixgmq_.perfInst = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::instructions);
+  //ixgmq_.perfCycles = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::cycles);
+  //ixgmq_.perfRefCycles = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::reference_cycles);
+  //ixgmq_.perfLLC_miss = ebbrt::perf::PerfCounter(ebbrt::perf::PerfEvent::llc_misses);
+  
   ixgmq_.powerMeter = ebbrt::rapl::RaplCounter();
 }
 
@@ -2415,7 +2527,7 @@ void ebbrt::IxgbeDriverRep::IxgbeDriverRep::StopTimer() {
 }
   
 void ebbrt::IxgbeDriverRep::IxgbeDriverRep::Fire() {
-  uint32_t mcore = static_cast<uint32_t>(Cpu::GetMine());
+  /*uint32_t mcore = static_cast<uint32_t>(Cpu::GetMine());
 
   ixgmq_.perfCycles.Stop();
   ixgmq_.perfInst.Stop();
@@ -2442,8 +2554,13 @@ void ebbrt::IxgbeDriverRep::IxgbeDriverRep::Fire() {
   if(mcore == 0 || mcore == 1) {
     ixgmq_.powerMeter.Start();
   }
-  ixgmq_.fireCount += 1;  
+  ixgmq_.fireCount += 1;  */
   //ebbrt::kprintf_force("Core %u: Fire() %llu\n", mcore, ixgmq_.fireCount);
+}
+
+uint32_t ebbrt::IxgbeDriverRep::ReadEicr() {
+  auto reg = root_.bar0_.Read32(0x00800);
+  return reg & 0xFFFFFFFF;
 }
 
 uint16_t ebbrt::IxgbeDriverRep::ReadRdh_1(uint32_t n) {
@@ -2520,27 +2637,27 @@ void ebbrt::IxgbeDriver::Config(std::string s, uint32_t v) {
   } else if(s == "start_stats") {
     //ebbrt::kprintf_force("start_stats on core %u\n", v);
     ixgmq[v]->collect_stats = true;
-    ixgmq[v]->perfCycles.Start();
-    ixgmq[v]->perfRefCycles.Start();
-    ixgmq[v]->perfInst.Start();
-    ixgmq[v]->perfLLC_miss.Start();    
+    //ixgmq[v]->perfCycles.Start();
+    //ixgmq[v]->perfRefCycles.Start();
+    //ixgmq[v]->perfInst.Start();
+    //ixgmq[v]->perfLLC_miss.Start();    
     ixgmq[v]->powerMeter.Start();
   }
   else if(s == "stop_stats") {
     //ebbrt::kprintf_force("stop_stats on core %u\n", v);
     ixgmq[v]->collect_stats = false;    
-    ixgmq[v]->perfCycles.Stop();
-    ixgmq[v]->perfRefCycles.Stop();
-    ixgmq[v]->perfInst.Stop();
-    ixgmq[v]->perfLLC_miss.Stop();    
+    //ixgmq[v]->perfCycles.Stop();
+    //ixgmq[v]->perfRefCycles.Stop();
+    //ixgmq[v]->perfInst.Stop();
+    //ixgmq[v]->perfLLC_miss.Stop();    
     ixgmq[v]->powerMeter.Stop();
     
   } else if(s == "clear_stats") {
     //ebbrt::kprintf_force("clear_stats on core %u\n", v);
-    ixgmq[v]->perfCycles.Clear();
-    ixgmq[v]->perfRefCycles.Clear();
-    ixgmq[v]->perfInst.Clear();
-    ixgmq[v]->perfLLC_miss.Clear();    
+    //ixgmq[v]->perfCycles.Clear();
+    //ixgmq[v]->perfRefCycles.Clear();
+    //ixgmq[v]->perfInst.Clear();
+    //ixgmq[v]->perfLLC_miss.Clear();    
     ixgmq[v]->powerMeter.Clear();
     
     //memset(ixgbe_logs[v], 0, sizeof(IXGBE_LOG_SIZE * sizeof(union IxgbeLogEntry)));

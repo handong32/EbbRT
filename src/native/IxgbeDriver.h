@@ -35,7 +35,7 @@
 //#define MAX_DESC
 
 union IxgbeLogEntry {
-  long long data[12];
+  long long data[11];
   struct {
     long long tsc;    
     long long ninstructions;
@@ -50,9 +50,7 @@ union IxgbeLogEntry {
     int rx_desc;
     int rx_bytes;
     int tx_desc;
-    int tx_bytes;
-    
-    long long pad;
+    int tx_bytes;    
   } __attribute((packed)) Fields;
 } __attribute((packed));
 
@@ -294,6 +292,7 @@ class IxgbeDriver : public EthernetDevice {
     uint32_t itr_val{8};
     std::chrono::nanoseconds itr_joules_last_ts{0};
     bool collect_stats{false};
+    bool start_perf{false};
     
     std::vector<uint32_t> tx_desc_counts;
     std::vector<uint32_t> rx_desc_counts;
@@ -583,6 +582,7 @@ class IxgbeDriverRep : public MulticoreEbb<IxgbeDriverRep, IxgbeDriver>, Timer::
   void WriteEimcn(uint32_t n, uint32_t m);
   void WriteEimc(uint32_t m);
   void WriteEims(uint32_t m);
+  uint32_t ReadEicr();
   uint32_t ReadTdh_1(uint32_t n);
   uint32_t ReadTdt_1(uint32_t n);
   uint32_t GetRxBuf(uint32_t* len, uint64_t* bAddr, uint64_t* rxflag,
