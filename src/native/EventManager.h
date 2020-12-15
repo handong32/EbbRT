@@ -23,7 +23,22 @@
 #include "Trans.h"
 #include "VMemAllocator.h"
 
-extern uint64_t nsleep_states;
+extern uint32_t nsleep_states[16];
+extern uint32_t sleep_state[16];
+/*extern uint32_t processCnt[16];
+extern uint32_t swEventCnt[16];
+extern uint32_t idleEventCnt[16];
+extern uint32_t processInterruptCntAll[16];
+extern uint32_t processInterruptCntA[16];
+extern uint32_t processInterruptCntB[16];
+extern uint32_t processInterruptCntC[16];
+extern uint32_t passTokenCnt[16];
+extern uint32_t receiveTokenCnt[16];
+extern uint32_t genFireCnt[16];
+extern uint32_t timerCnt[16];
+extern uint32_t fireCntA[16];
+extern uint32_t fireCntB[16];
+*/
 
 namespace ebbrt {
 

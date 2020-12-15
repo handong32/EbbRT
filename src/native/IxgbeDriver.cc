@@ -22,6 +22,7 @@
 struct IxgbeLog ixgbe_stats[16];
 union IxgbeLogEntry *ixgbe_logs[16];
 std::unique_ptr<ebbrt::MutUniqueIOBuf> bsendbufs[16];
+//uint64_t rxPollCnt[16];
 
 void ebbrt::IxgbeDriver::Create(pci::Device& dev) {
   auto ixgbe_dev = new IxgbeDriver(dev);
@@ -1854,9 +1855,8 @@ void ebbrt::IxgbeDriver::Init() {
   WriteReta(i+30, 0x03020100);
   WriteReta(i+31, 0x07060504);
   */
-
   uint32_t ncore = static_cast<uint32_t>(Cpu::Count());
-  for (auto i = 0; i < 32; i += 4) {
+  for (auto i = 0; i < 32; i += 4) {    
     // all route to core 0
     if(ncore == 1) {
       WriteReta(i, 0x0000000);
@@ -1885,11 +1885,10 @@ void ebbrt::IxgbeDriver::Init() {
       WriteReta(i+3, 0x7060504);
     } else if(ncore == 16){
       // memcached
-      /*WriteReta(i+0, 0x03020100);
-      WriteReta(i+1, 0x07060504); 
-      WriteReta(i+2, 0x0B0A0908);
-      WriteReta(i+3, 0x0F0E0D0C);
-      */
+      //WriteReta(i+0, 0x03020100);
+      //WriteReta(i+1, 0x07060504); 
+      //WriteReta(i+2, 0x0B0A0908);
+      //WriteReta(i+3, 0x0F0E0D0C);      
       
       // nodejs -- all on core 1
       ebbrt::kprintf_force("*** NodeJS firing all on core 1\n");
@@ -2224,9 +2223,11 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
   uint64_t cjoules, cins, ccyc, crefcyc, cllc;
   uint64_t c3, c6, c7;
   //uint32_t eicr;
-  
+
+  //rxPollCnt[mcore]++;
   c3 = c6 = c7 = 0;
-  
+
+  // hard coded for this processor to initialize PMC counter
   if(ixgmq_.start_perf == false) {    
     uint32_t index, low, high;
     uint64_t data;
@@ -2248,15 +2249,15 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
     low = (uint32_t)(data & 0xFFFFFFFF);
     high = (data >> 32) & 0xFFFFFFFF;
     asm volatile("wrmsr" : : "c"(index), "a"(low), "d"(high));
-
+    
     ixgmq_.start_perf = true;
   }
-  
+
   if(ixgmq_.collect_stats) {
     ccyc = 0;
     cllc = 0;
     icnt = ixgbe_stats[mcore].itr_cnt;
-    ixgbe_stats[mcore].itr_cnt2 ++;
+//    ixgbe_stats[mcore].itr_cnt2 ++;
     
     if (icnt < IXGBE_LOG_SIZE) {      
       //get current tsc and store it
@@ -2266,69 +2267,64 @@ void ebbrt::IxgbeDriverRep::ReceivePoll() {
       //eicr = ReadEicr();
       //ixgbe_logs[mcore][icnt].Fields.c3 = eicr;
       
-      //__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.tsc), now);
-      ixgbe_logs[mcore][icnt].Fields.tsc = now;
+      __builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.tsc), now);
+      //ixgbe_logs[mcore][icnt].Fields.tsc = now;
       
       // get last tsc
       last = ixgbe_stats[mcore].itr_joules_last_tsc;
 
       // ~ 1 ms has passed
-      if ((now - last) > TSC_KHZ) { 	
+      if ((now - last) > TSC_KHZ) {
 	cjoules = ixgmq_.powerMeter.ReadMsr();
+	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.joules), cjoules);		
+	//ixgbe_logs[mcore][icnt].Fields.joules = cjoules;			
+
+	//c3 = ebbrt::msr::Read(0x3FC);
+	//c6 = ebbrt::msr::Read(0x3FD);
+	//c7 = ebbrt::msr::Read(0x3FE);
+	c7 = nsleep_states[mcore];	
+	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.c3), c3);
+	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.c6), c6);
+	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.c7), c7);
+	//ixgbe_logs[mcore][icnt].Fields.c3 = c3;
+	//ixgbe_logs[mcore][icnt].Fields.c6 = c6;
+	//ixgbe_logs[mcore][icnt].Fields.c7 = c7;
+	
 	if (ixgmq_.start_perf) {
 	  cins = ebbrt::msr::Read(0x309);
 	  ccyc = ebbrt::msr::Read(0x30A);
 	  crefcyc = ebbrt::msr::Read(0x30B);
 	  cllc = ebbrt::msr::Read(0xC1);
+
+	  __builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.ninstructions), cins);
+	  __builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.ncycles), ccyc);
+	  __builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.nref_cycles), crefcyc);
+	  __builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.nllc_miss), cllc);
+	  //ixgbe_logs[mcore][icnt].Fields.ninstructions = cins;
+	  //ixgbe_logs[mcore][icnt].Fields.ncycles = ccyc;
+	  //ixgbe_logs[mcore][icnt].Fields.nref_cycles = crefcyc;
+	  //ixgbe_logs[mcore][icnt].Fields.nllc_miss = cllc;	  
 	}
-	//cins = ixgmq_.perfInst.Read();
-	//ccyc = ixgmq_.perfCycles.Read();
-	//crefcyc = ixgmq_.perfRefCycles.Read();
-	//cllc = ixgmq_.perfLLC_miss.Read();
-	
-	//c3 = ebbrt::msr::Read(0x3FC);
-	//c6 = ebbrt::msr::Read(0x3FD);
-	//c7 = ebbrt::msr::Read(0x3FE);
-	
-	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.joules), cjoules);	
-	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.ninstructions), cins);
-	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.ncycles), ccyc);
-	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.nref_cycles), crefcyc);
-	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.nllc_miss), cllc);
-
-	/*ixgbe_logs[mcore][icnt].Fields.joules = cjoules;
-	ixgbe_logs[mcore][icnt].Fields.ninstructions = cins;
-	ixgbe_logs[mcore][icnt].Fields.ncycles = ccyc;
-	ixgbe_logs[mcore][icnt].Fields.nref_cycles = crefcyc;
-	ixgbe_logs[mcore][icnt].Fields.nllc_miss = cllc;*/
-	
-	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.c3), c3);
-	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.c6), c6);
-	__builtin_ia32_movnti64(&(ixgbe_logs[mcore][icnt].Fields.c7), c7);
-
-	/*ixgbe_logs[mcore][icnt].Fields.c3 = c3;
-	ixgbe_logs[mcore][icnt].Fields.c6 = c6;
-	ixgbe_logs[mcore][icnt].Fields.c7 = c7;
-	*/
 	
         ixgbe_stats[mcore].itr_joules_last_tsc = now;
-      }
-
+      }            
+      
+      //ixgbe_logs[mcore][icnt].Fields.rx_desc = ixgmq_.stat_num_rx_desc;
+      //ixgbe_logs[mcore][icnt].Fields.rx_bytes = ixgmq_.stat_num_rx_bytes;
+      //ixgbe_logs[mcore][icnt].Fields.tx_desc = ixgmq_.stat_num_tx_desc;
+      //ixgbe_logs[mcore][icnt].Fields.tx_bytes = ixgmq_.stat_num_tx_bytes;
       __builtin_ia32_movnti(&(ixgbe_logs[mcore][icnt].Fields.rx_desc), ixgmq_.stat_num_rx_desc);
       __builtin_ia32_movnti(&(ixgbe_logs[mcore][icnt].Fields.rx_bytes), ixgmq_.stat_num_rx_bytes);
       __builtin_ia32_movnti(&(ixgbe_logs[mcore][icnt].Fields.tx_desc), ixgmq_.stat_num_tx_desc);
       __builtin_ia32_movnti(&(ixgbe_logs[mcore][icnt].Fields.tx_bytes), ixgmq_.stat_num_tx_bytes);
-
-      /*ixgbe_logs[mcore][icnt].Fields.rx_desc = ixgmq_.stat_num_rx_desc;
-      ixgbe_logs[mcore][icnt].Fields.rx_bytes = ixgmq_.stat_num_rx_bytes;
-      ixgbe_logs[mcore][icnt].Fields.tx_desc = ixgmq_.stat_num_tx_desc;
-      ixgbe_logs[mcore][icnt].Fields.tx_bytes = ixgmq_.stat_num_tx_bytes;*/
-	
+      
       ixgmq_.stat_num_rx_bytes = 0;
       ixgmq_.stat_num_rx_desc = 0;
       ixgmq_.stat_num_tx_bytes = 0;
       ixgmq_.stat_num_tx_desc = 0;
+      
       ixgbe_stats[mcore].itr_cnt++;
+      nsleep_states[mcore] = 0;
     }
   }
     
@@ -2634,6 +2630,9 @@ void ebbrt::IxgbeDriver::Config(std::string s, uint32_t v) {
       ixgmq[i]->powerMeter.SetLimit(v);
       ebbrt::kprintf_force("%u: rapl = %u\n", i, v);
     }
+  } else if(s == "sleep_state") {
+    sleep_state[i] = v;
+    ebbrt::kprintf_force("IxgbeDriver sleep_state[%u] = 0x%x\n", i, v);
   } else if(s == "start_stats") {
     //ebbrt::kprintf_force("start_stats on core %u\n", v);
     ixgmq[v]->collect_stats = true;
@@ -2659,7 +2658,7 @@ void ebbrt::IxgbeDriver::Config(std::string s, uint32_t v) {
     //ixgmq[v]->perfInst.Clear();
     //ixgmq[v]->perfLLC_miss.Clear();    
     ixgmq[v]->powerMeter.Clear();
-    
+
     //memset(ixgbe_logs[v], 0, sizeof(IXGBE_LOG_SIZE * sizeof(union IxgbeLogEntry)));
     for (uint32_t i = 0; i < ixgbe_stats[v].itr_cnt; i++) {
       ixgbe_logs[v][i].Fields.rx_desc=0;
@@ -2675,17 +2674,34 @@ void ebbrt::IxgbeDriver::Config(std::string s, uint32_t v) {
       ixgbe_logs[v][i].Fields.c7=0;
       ixgbe_logs[v][i].Fields.joules=0;		   
       ixgbe_logs[v][i].Fields.tsc=0;
-    }
+      }
     ixgbe_stats[v].itr_joules_last_tsc = 0;
     ixgbe_stats[v].itr_cnt =0;
-    ixgbe_stats[v].itr_cnt2 =0;
+    //ixgbe_stats[v].itr_cnt2 =0;
     ixgbe_stats[v].rdtsc_start = 0;
     ixgbe_stats[v].rdtsc_end = 0;
     ixgbe_stats[v].repeat =0;
     ixgbe_stats[v].dvfs =0;
     ixgbe_stats[v].rapl =0;
     ixgbe_stats[v].itr =0;
-    ixgbe_stats[v].iter =0;    
+    ixgbe_stats[v].iter =0;
+
+    // clear up counters
+    memset(nsleep_states, 0, sizeof(nsleep_states));
+    /*memset(processCnt, 0, sizeof(processCnt));
+    memset(swEventCnt, 0, sizeof(swEventCnt));
+    memset(idleEventCnt, 0, sizeof(idleEventCnt));
+    memset(rxPollCnt, 0, sizeof(rxPollCnt));
+    memset(processInterruptCntAll, 0, sizeof(processInterruptCntAll));
+    memset(processInterruptCntA, 0, sizeof(processInterruptCntA));
+    memset(processInterruptCntB, 0, sizeof(processInterruptCntB));
+    memset(processInterruptCntC, 0, sizeof(processInterruptCntC));
+    memset(passTokenCnt, 0, sizeof(passTokenCnt));
+    memset(receiveTokenCnt, 0, sizeof(receiveTokenCnt));
+    memset(genFireCnt, 0, sizeof(genFireCnt));
+    memset(fireCntA, 0, sizeof(fireCntA));
+    memset(fireCntB, 0, sizeof(fireCntB));*/
+
   } else {    
     ebbrt::kprintf_force("%s Unknown command: %s\n", __FUNCTION__, s.c_str());
   }

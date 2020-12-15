@@ -74,6 +74,7 @@ struct IxgbeLog {
 extern struct IxgbeLog ixgbe_stats[16];
 extern union IxgbeLogEntry *ixgbe_logs[16];
 extern std::unique_ptr<ebbrt::MutUniqueIOBuf> bsendbufs[16];
+//extern uint64_t rxPollCnt[16];
 
 namespace ebbrt {
   

@@ -70,6 +70,40 @@ extern "C" __attribute__((noreturn)) void
 ebbrt::Main(multiboot::Information* mbi) {
   console::Init();
 
+  memset(nsleep_states, 0, sizeof(nsleep_states));
+  memset(sleep_state, 0, sizeof(sleep_state));
+  sleep_state[0]=48;
+  sleep_state[1]=48;
+  sleep_state[2]=48;
+  sleep_state[3]=48;
+  sleep_state[4]=48;
+  sleep_state[5]=48;
+  sleep_state[6]=48;
+  sleep_state[7]=48;
+  sleep_state[8]=48;
+  sleep_state[9]=48;
+  sleep_state[10]=48;
+  sleep_state[11]=48;
+  sleep_state[12]=48;
+  sleep_state[13]=48;
+  sleep_state[14]=48;
+  sleep_state[15]=48;  
+  
+  /*memset(processCnt, 0, sizeof(processCnt));
+  memset(swEventCnt, 0, sizeof(swEventCnt));
+  memset(idleEventCnt, 0, sizeof(idleEventCnt));
+  memset(rxPollCnt, 0, sizeof(rxPollCnt));
+  memset(processInterruptCntAll, 0, sizeof(processInterruptCntAll));
+  memset(processInterruptCntA, 0, sizeof(processInterruptCntA));
+  memset(processInterruptCntB, 0, sizeof(processInterruptCntB));
+  memset(processInterruptCntC, 0, sizeof(processInterruptCntC));
+  memset(passTokenCnt, 0, sizeof(passTokenCnt));
+  memset(receiveTokenCnt, 0, sizeof(receiveTokenCnt));
+  memset(genFireCnt, 0, sizeof(genFireCnt));
+  memset(timerCnt, 0, sizeof(timerCnt));
+  memset(fireCntA, 0, sizeof(fireCntA));
+  memset(fireCntB, 0, sizeof(fireCntB));*/
+
 #ifdef __EBBRT_ENABLE_TRACE__
   trace::Init();
 #endif

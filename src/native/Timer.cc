@@ -10,9 +10,19 @@
 
 const constexpr ebbrt::EbbId ebbrt::Timer::static_id;
 
+//uint32_t timerCnt[16];
+//uint32_t fireCntA[16];
+//uint32_t fireCntB[16];
+
 ebbrt::Timer::Timer() {
+  //uint32_t mycpu = static_cast<uint32_t>(Cpu::GetMine());
+  
+  //timerCnt[mycpu] += 1;
+//  auto interrupt = event_manager->AllocateVector([this, mycpu]() {
   auto interrupt = event_manager->AllocateVector([this]() {
     auto now = clock::Wall::Now().time_since_epoch();
+    //fireCntA[mycpu] ++;
+    
     while (!timers_.empty() && timers_.begin()->fire_time_ <= now) {
       auto& hook = *timers_.begin();
 
@@ -25,6 +35,7 @@ ebbrt::Timer::Timer() {
         timers_.insert(hook);
       }
 
+      //fireCntB[mycpu] ++;
       hook.Fire();
 
       now = clock::Wall::Now().time_since_epoch();

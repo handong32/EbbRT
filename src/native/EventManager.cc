@@ -16,6 +16,19 @@
 #include "Trace.h"
 #include "VMem.h"
 
+uint32_t nsleep_states[16];
+uint32_t sleep_state[16];
+/*uint32_t processCnt[16];
+uint32_t swEventCnt[16];
+uint32_t idleEventCnt[16];
+uint32_t processInterruptCntAll[16];
+uint32_t processInterruptCntA[16];
+uint32_t processInterruptCntB[16];
+uint32_t processInterruptCntC[16];
+uint32_t passTokenCnt[16];
+uint32_t receiveTokenCnt[16];
+uint32_t genFireCnt[16];*/
+
 namespace {
 struct InterruptHandler {
   ebbrt::RcuHListHook hook;
@@ -131,8 +144,9 @@ template <typename F> void ebbrt::EventManager::InvokeFunction(F&& f) {
 
 void ebbrt::EventManager::Process() {
   auto stack_top = (active_event_context_.stack + kStackPages).ToAddr();
+  uint32_t mycpu = static_cast<uint32_t>(Cpu::GetMine());
   Cpu::GetMine().SetEventStack(stack_top);
-  unsigned long ecx, edx, eax;
+  uint32_t ecx, edx, eax;
   ecx = edx = eax = 0;
   
 // process an interrupt without halting
@@ -140,26 +154,29 @@ void ebbrt::EventManager::Process() {
 // instruction is executed (to allow for a halt for example). The nop gives us
 // a one instruction window to process an interrupt (before the cli)
 process:
+  //processCnt[mycpu]++;
   asm volatile("sti;"
                "nop;"
                "cli;");
   // If an interrupt was processed then we would not reach this code (the
   // interrupt does not return here but instead to the top of this function)
 
-  //ebbrt::kprintf_force("p1\n");
   if (!tasks_.empty()) {
     auto f = std::move(tasks_.front());
     tasks_.pop_front();
     InvokeFunction(f);
+    //swEventCnt[mycpu]++;
     // if we had a task to execute, then we go to the top again
     goto process;
   }
 
   if (idle_callback_) {
+    //idleEventCnt[mycpu]++;
     InvokeFunction(*idle_callback_);
     goto process;
   }
-  
+
+  nsleep_states[mycpu] ++;  
   asm volatile(".byte 0x0f, 0x01, 0xc8;"
 	       :: "a" ((void*)&flags), "c" (ecx), "d"(edx));
 
@@ -173,7 +190,7 @@ process:
   // C6 0x20
   // C7 0x30
   ecx = 1; /* break on interrupt flag */
-  eax = 0x30; /* we always pick the deepest sleep state */
+  eax = sleep_state[mycpu]; /* we always pick the deepest sleep state */
   
   asm volatile("sti; .byte 0x0f, 0x01, 0xc9;"
 	       :: "a" (eax), "c" (ecx));
@@ -199,7 +216,7 @@ void ebbrt::EventManager::FreeStack(Pfn stack) { free_stacks_.push(stack); }
 static_assert(ebbrt::Cpu::kMaxCpus <= 256, "adjust event id calculation");
 
 ebbrt::EventManager::EventManager(const RepMap& rm)
-    : reps_(rm), next_event_id_(Cpu::GetMine() << 24),
+  : reps_(rm), next_event_id_(Cpu::GetMine() << 24),
       active_event_context_(next_event_id_++, AllocateStack()) {}
 
 void ebbrt::EventManager::Spawn(MovableFunction<void()> func,
@@ -352,20 +369,27 @@ uint8_t ebbrt::EventManager::AllocateVector(MovableFunction<void()> func) {
 }
 
 void ebbrt::EventManager::ProcessInterrupt(int num) {
+  //uint32_t mycpu = static_cast<uint32_t>(Cpu::GetMine());  
   apic::Eoi();
+  //processInterruptCntAll[mycpu]++;
+  
   if (num == 32) {
     // pull all remote tasks onto our queue
     std::lock_guard<ebbrt::SpinLock> l(remote_.lock);
     tasks_.splice(tasks_.end(), std::move(remote_.tasks));
+    //processInterruptCntA[mycpu]++;
+    
   } else if (num == 33) {
+    //processInterruptCntB[mycpu]++;
     ReceiveToken();
   } else {
+    //processInterruptCntC[mycpu]++;
     auto ih = vec_data->map.find(num);
     kassert(ih != nullptr);
     auto& f = ih->func;
     InvokeFunction(f);
   }
-  //ebbrt::kprintf_force("ProcessInterrupt %d\n", num);
+  //ebbrt::kprintf_force("ProcessInterrupt %d\n", num);OA
   Process();
 }
 
@@ -404,7 +428,9 @@ ebbrt::EventManager::EventContext::EventContext(uint32_t event_id, Pfn stack)
 
 void ebbrt::EventManager::PassToken() {
   size_t my_cpu_index = Cpu::GetMine();
+  //uint32_t mycpu = static_cast<uint32_t>(Cpu::GetMine());  
   if (Cpu::Count() > 1) {
+    //passTokenCnt[mycpu] ++;
     auto next_cpu_index = (my_cpu_index + 1) % Cpu::Count();
     auto next_cpu = Cpu::GetByIndex(next_cpu_index);
     kassert(next_cpu != nullptr);
@@ -415,14 +441,18 @@ void ebbrt::EventManager::PassToken() {
 }
 
 void ebbrt::EventManager::ReceiveToken() {
+  //uint32_t mycpu = static_cast<uint32_t>(Cpu::GetMine());  
   pending_generation_ = generation_++;
-
+  //receiveTokenCnt[mycpu] ++;  
   StartTimer();
 }
 
 // Check Generation
 void ebbrt::EventManager::Fire() {
-  if (generation_count_[pending_generation_ % 2] == 0) {
+  //uint32_t mycpu = static_cast<uint32_t>(Cpu::GetMine());
+  //genFireCnt[mycpu] ++;
+  
+  if (generation_count_[pending_generation_ % 2] == 0) {    
     // generation complete
     PassToken();
     // temporarily store tasks that have now lived at least one entire
